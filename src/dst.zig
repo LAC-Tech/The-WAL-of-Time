@@ -20,7 +20,7 @@ const OperatingSystem = struct {
     allocator: mem.Allocator,
 
     const FileOp = union(enum) {
-        create: *const fn (fd: posix.fd_t) void,
+        create: *const fn (fd: posix.OpenError!posix.fd_t) void,
         read: struct {
             fd: posix.fd_t,
             buf: *ArrayList(u8),
@@ -74,7 +74,43 @@ const OperatingSystem = struct {
 
     // TODO: this approach means we allocate a lot.
     // Ideally, file system should be a flat array of bytes
-    const FileSystem = ArrayList(AppendOnlyFile);
+    const FileSystem = struct {
+        files: ArrayList(AppendOnlyFile),
+        allocator: mem.Allocator,
+
+        fn init(allocator: mem.Allocator) @This() {
+            return .{
+                .files = ArrayList(AppendOnlyFile).init(allocator),
+                .allocator = allocator,
+            };
+        }
+
+        fn deinit(self: *@This()) void {
+            self.files.deinit();
+        }
+
+        fn create(self: *@This()) posix.OpenError!posix.fd_t {
+            const fd = self.files.items.len;
+            const file = AppendOnlyFile.init(self.allocator);
+            self.files.append(file) catch return posix.OpenError.NoSpaceLeft;
+            return @intCast(fd);
+        }
+
+        fn append(
+            self: *@This(),
+            fd: posix.fd_t,
+            data: []const u8,
+        ) posix.WriteError!usize {
+            const index: usize = @intCast(fd);
+            if (self.files.items.len > index) {
+                var aof = self.files.items[index];
+                return aof.append(data);
+            } else {
+                return posix.WriteError.InvalidArgument;
+            }
+        }
+    };
+
     const Event = struct { priority: u64, file_op: FileOp };
     const Events = PriorityQueue(Event, void, struct {
         fn compare(_: void, a: Event, b: Event) math.Order {
@@ -102,22 +138,14 @@ const OperatingSystem = struct {
 
         switch (event.file_op) {
             .create => |callback| {
-                const fd = self.fs.items.len;
-                const file = AppendOnlyFile.init(self.allocator);
-                try self.fs.append(file);
-                callback(@intCast(fd));
+                const fd = self.fs.create();
+                callback(fd);
             },
             .read => |e| {
                 std.debug.print("{}", .{e});
             },
             .append => |e| {
-                const index: usize = @intCast(e.fd);
-                if (self.fs.items.len > index) {
-                    var aof = self.fs.items[index];
-                    return e.callback(aof.append(e.data));
-                } else {
-                    return e.callback(posix.WriteError.InvalidArgument);
-                }
+                e.callback(self.fs.append(e.fd, e.data));
             },
             .delete => |e| {
                 std.debug.print("TODO impl delete {}\n", .{e});
@@ -127,7 +155,7 @@ const OperatingSystem = struct {
 
     fn create_file(
         self: *@This(),
-        callback: *const fn (fd: posix.fd_t) void,
+        callback: *const fn (fd: posix.OpenError!posix.fd_t) void,
     ) !void {
         const event: Event = .{
             .priority = self.rng.random().int(u64),
@@ -149,8 +177,12 @@ const OperatingSystem = struct {
     }
 };
 
-fn on_file_create(fd: posix.fd_t) void {
-    std.debug.print("fd created = {}\n", .{fd});
+fn on_file_create(fd: posix.OpenError!posix.fd_t) void {
+    if (fd) |valid_fd| {
+        std.debug.print("fd created = {}\n", .{valid_fd});
+    } else |err| {
+        std.debug.print("ERROR creating file: {}\n", .{err});
+    }
 }
 
 fn on_file_delete(fd: posix.fd_t) void {

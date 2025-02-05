@@ -97,10 +97,10 @@ const OperatingSystem = struct {
     }
 
     /// Nothing ever happens... until we advance the state of the OS.
-    fn tick(self: *@This()) !bool {
+    fn tick(self: *@This()) !void {
         const event = self.events.removeOrNull() orelse {
             std.debug.print("No events :'(\n", .{});
-            return false;
+            return;
         };
 
         switch (event.file_op) {
@@ -124,8 +124,6 @@ const OperatingSystem = struct {
                 e.callback(self.fs.remove(e.fd));
             },
         }
-
-        return true;
     }
 
     fn create_file(
@@ -158,25 +156,32 @@ fn get_seed() !u64 {
     return std.crypto.random.int(u64);
 }
 
-pub fn main() !void {
-    var gpa = heap.GeneralPurposeAllocator(.{}){};
+// Configuration parameters for the DST
+// In one place for ease of tweaking
+const Config = struct {
+    const max_sim_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours
+    const create_file_chance = 0.1;
+};
 
+pub fn main() !void {
     const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
 
     std.debug.print("Deterministic Simulation Tester\n", .{});
     std.debug.print("seed = {}\n", .{seed});
 
+    var gpa = heap.GeneralPurposeAllocator(.{}){};
     var os = OperatingSystem.init(gpa.allocator(), &rng);
     defer os.deinit();
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    try os.create_file(&on_file_create);
-    while (try os.tick()) {}
+
+    var time: u64 = 0;
+    while (time <= Config.max_sim_time_in_ms) : (time += 10) {
+        if (Config.create_file_chance > rng.random().float(f64)) {
+            try os.create_file(&on_file_create);
+        }
+
+        try os.tick();
+    }
 }
 
 test "OS sanity check" {

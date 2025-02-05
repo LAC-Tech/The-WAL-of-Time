@@ -15,7 +15,6 @@ const PriorityQueue = std.PriorityQueue;
 /// Simulating an OS with async IO, and append-only files
 const OperatingSystem = struct {
     fs: FileSystem,
-    fd_count: i32,
     events: Events,
     rng: *rand.DefaultPrng,
     allocator: mem.Allocator,
@@ -75,7 +74,7 @@ const OperatingSystem = struct {
 
     // TODO: this approach means we allocate a lot.
     // Ideally, file system should be a flat array of bytes
-    const FileSystem = AutoHashMap(posix.fd_t, AppendOnlyFile);
+    const FileSystem = ArrayList(AppendOnlyFile);
     const Event = struct { priority: u64, file_op: FileOp };
     const Events = PriorityQueue(Event, void, struct {
         fn compare(_: void, a: Event, b: Event) math.Order {
@@ -86,7 +85,6 @@ const OperatingSystem = struct {
     fn init(allocator: mem.Allocator, rng: *rand.DefaultPrng) @This() {
         return .{
             .fs = FileSystem.init(allocator),
-            .fd_count = 0,
             .events = Events.init(allocator, {}),
             .rng = rng,
             .allocator = allocator,
@@ -104,24 +102,25 @@ const OperatingSystem = struct {
 
         switch (event.file_op) {
             .create => |callback| {
-                const fd = self.fd_count;
-                self.fd_count += 1;
+                const fd = self.fs.items.len;
                 const file = AppendOnlyFile.init(self.allocator);
-                try self.fs.putNoClobber(fd, file);
+                try self.fs.append(file);
                 callback(@intCast(fd));
             },
             .read => |e| {
                 std.debug.print("{}", .{e});
             },
             .append => |e| {
-                const res = if (self.fs.getPtr(e.fd)) |aof|
-                    aof.append(e.data)
-                else
-                    posix.WriteError.InvalidArgument;
-                e.callback(res);
+                const index: usize = @intCast(e.fd);
+                if (self.fs.items.len > index) {
+                    var aof = self.fs.items[index];
+                    return e.callback(aof.append(e.data));
+                } else {
+                    return e.callback(posix.WriteError.InvalidArgument);
+                }
             },
             .delete => |e| {
-                e.callback(self.fs.remove(e.fd));
+                std.debug.print("TODO impl delete {}\n", .{e});
             },
         }
     }
@@ -136,10 +135,26 @@ const OperatingSystem = struct {
         };
         try self.events.add(event);
     }
+
+    fn delete_file(
+        self: *@This(),
+        fd: posix.fd_t,
+        callback: *const fn (fd: posix.fd_t) void,
+    ) !void {
+        const event: Event = .{
+            .priority = self.rng.random().int(u64),
+            .file_op = .{ .fd = fd, .callback = callback },
+        };
+        try self.events.add(event);
+    }
 };
 
 fn on_file_create(fd: posix.fd_t) void {
     std.debug.print("fd created = {}\n", .{fd});
+}
+
+fn on_file_delete(fd: posix.fd_t) void {
+    std.debug.print("fd {} ここで死ね", .{fd});
 }
 
 fn get_seed() !u64 {
@@ -160,7 +175,10 @@ fn get_seed() !u64 {
 // In one place for ease of tweaking
 const Config = struct {
     const max_sim_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours
+
+    // TODO: these chances are temporary; will later be driven by actual db
     const create_file_chance = 0.1;
+    const delete_file_chance = 0.05;
 };
 
 pub fn main() !void {
@@ -174,16 +192,25 @@ pub fn main() !void {
     var os = OperatingSystem.init(gpa.allocator(), &rng);
     defer os.deinit();
 
+    const phys_start_time = std.time.nanoTimestamp();
+
     var time: u64 = 0;
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
         if (Config.create_file_chance > rng.random().float(f64)) {
             try os.create_file(&on_file_create);
         }
 
+        //if (Config.delete_file_chance > rng.random().float(f64)) {
+        //    try os.delete_file(&on_file_delete);
+        //}
+
         try os.tick();
     }
 
-    std.debug.print("Test complete!\n", .{});
+    const phys_end_time = std.time.nanoTimestamp();
+    const phys_time_elapsed: f128 = @floatFromInt(phys_end_time - phys_start_time);
+
+    std.debug.print("Test complete in {e} ns", .{phys_time_elapsed});
 }
 
 test "OS sanity check" {

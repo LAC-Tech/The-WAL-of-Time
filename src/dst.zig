@@ -15,6 +15,7 @@ const PriorityQueue = std.PriorityQueue;
 /// Simulating an OS with async IO, and append-only files
 const OperatingSystem = struct {
     fs: FileSystem,
+    fd_count: i32,
     events: Events,
     rng: *rand.DefaultPrng,
     allocator: mem.Allocator,
@@ -85,6 +86,7 @@ const OperatingSystem = struct {
     fn init(allocator: mem.Allocator, rng: *rand.DefaultPrng) @This() {
         return .{
             .fs = FileSystem.init(allocator),
+            .fd_count = 0,
             .events = Events.init(allocator, {}),
             .rng = rng,
             .allocator = allocator,
@@ -98,14 +100,12 @@ const OperatingSystem = struct {
 
     /// Nothing ever happens... until we advance the state of the OS.
     fn tick(self: *@This()) !void {
-        const event = self.events.removeOrNull() orelse {
-            std.debug.print("No events :'(\n", .{});
-            return;
-        };
+        const event = self.events.removeOrNull() orelse return;
 
         switch (event.file_op) {
             .create => |callback| {
-                const fd = self.rng.random().int(posix.fd_t);
+                const fd = self.fd_count;
+                self.fd_count += 1;
                 const file = AppendOnlyFile.init(self.allocator);
                 try self.fs.putNoClobber(fd, file);
                 callback(@intCast(fd));
@@ -182,6 +182,8 @@ pub fn main() !void {
 
         try os.tick();
     }
+
+    std.debug.print("Test complete!\n", .{});
 }
 
 test "OS sanity check" {

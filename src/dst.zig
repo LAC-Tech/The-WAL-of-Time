@@ -144,20 +144,24 @@ fn on_file_create(fd: posix.fd_t) void {
     std.debug.print("fd created = {}\n", .{fd});
 }
 
-pub fn main() !void {
-    var gpa = heap.GeneralPurposeAllocator(.{}){};
-
+fn get_seed() !u64 {
     var args = std.process.args();
     _ = args.skip();
 
-    const seed: u64 = if (args.next()) |arg|
-        std.fmt.parseInt(u64, arg, 10) catch |err| {
+    if (args.next()) |arg| {
+        return std.fmt.parseInt(u64, arg, 10) catch |err| {
             std.debug.print("Failed to parse seed: {}\n", .{err});
             return err;
-        }
-    else
-        std.crypto.random.int(u64);
+        };
+    }
 
+    return std.crypto.random.int(u64);
+}
+
+pub fn main() !void {
+    var gpa = heap.GeneralPurposeAllocator(.{}){};
+
+    const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
 
     std.debug.print("Deterministic Simulation Tester\n", .{});

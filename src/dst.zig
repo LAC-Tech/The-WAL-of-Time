@@ -12,6 +12,9 @@ const ArrayList = std.ArrayList;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
+const root = @import("./root.zig");
+const Stream = root.Stream;
+
 /// Simulating an OS with async IO, and append-only files
 const OperatingSystem = struct {
     fs: FileSystem,
@@ -246,11 +249,20 @@ pub fn main() !void {
 }
 
 test "OS sanity check" {
-    var rng = rand.DefaultPrng.init(0);
+    const seed = 0;
+    var rng = rand.DefaultPrng.init(seed);
     var os = OperatingSystem.init(testing.allocator, &rng);
     defer os.deinit();
     try os.create_file(&on_file_create);
     _ = try os.tick();
+
+    var stream = Stream(OperatingSystem).init(
+        &os,
+        -1,
+        testing.allocator,
+        seed,
+    );
+    defer stream.deinit();
 }
 
 test "Append-only File sanity check" {

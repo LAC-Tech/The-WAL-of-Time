@@ -12,6 +12,11 @@ const ArrayList = std.ArrayList;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
+const c = @cImport({
+    @cDefine("TB_IMPL", {});
+    @cInclude("termbox2.h");
+});
+
 const root = @import("./root.zig");
 const Stream = root.Stream;
 
@@ -220,8 +225,15 @@ pub fn main() !void {
     const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
 
-    std.debug.print("Deterministic Simulation Tester\n", .{});
-    std.debug.print("seed = {}\n", .{seed});
+    //std.debug.print("Deterministic Simulation Tester\n", .{});
+    //std.debug.print("seed = {}\n", .{seed});
+
+    var ev: c.tb_event = undefined;
+    _ = c.tb_init();
+    _ = c.tb_print(0, 0, 0, 0, "Deterministic Simulation Tester");
+    _ = c.tb_present();
+    _ = c.tb_poll_event(&ev);
+    _ = c.tb_shutdown();
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     var os = OperatingSystem.init(gpa.allocator(), &rng);

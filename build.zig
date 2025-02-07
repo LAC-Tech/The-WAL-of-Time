@@ -39,6 +39,15 @@ pub fn build(b: *std.Build) void {
     // required by notcurses
     exe.linkLibC();
     exe.linkSystemLibrary("notcurses");
+    exe.addCSourceFile(.{
+        .file = b.path("src/tui.c"),
+        .flags = &.{
+            "-std=c23", // Specify C standard
+            "-Wall", // Turn on all warnings
+            "-Wextra", // Additional warnings
+        },
+    });
+    exe.addIncludePath(b.path("src/"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

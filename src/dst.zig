@@ -13,8 +13,7 @@ const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
 const c = @cImport({
-    @cInclude("locale.h");
-    @cInclude("notcurses/notcurses.h");
+    @cInclude("tui.h");
 });
 
 const root = @import("./root.zig");
@@ -191,15 +190,8 @@ const OperatingSystem = struct {
 };
 
 fn on_file_create(fd: posix.OpenError!posix.fd_t, context: *Context) void {
-    if (fd) |_| {
-        const str: [*c]const u8 = "fd created";
-        _ = c.ncplane_printf(context.ncplane, str);
-    } else |_| {
-        const str: [*c]const u8 = "fd create err";
-        _ = c.ncplane_printf(context.ncplane, str);
-    }
-
-    _ = c.notcurses_render(context.nc);
+    _ = fd catch -1;
+    _ = context;
 }
 
 fn on_file_delete(fd: posix.fd_t) void {
@@ -222,8 +214,7 @@ fn get_seed() !u64 {
 
 const Context = struct {
     rng: *rand.DefaultPrng,
-    ncplane: *c.struct_ncplane,
-    nc: *c.struct_notcurses,
+    tui: *c.tui_context,
 };
 
 // Configuration parameters for the DST
@@ -237,27 +228,13 @@ const Config = struct {
 };
 
 pub fn main() !void {
-    const locale = c.setlocale(c.LC_ALL, "");
-    if (locale == null) {
-        std.debug.print("Failed to set locale", .{});
-        return;
-    }
-    const ncopt = mem.zeroes(c.notcurses_options);
-
-    const nc = c.notcurses_init(&ncopt, c.stdout) orelse {
-        std.debug.print("Failed to init ncurses", .{});
-        return;
-    };
-
-    const ncplane = c.notcurses_stdplane(nc) orelse {
-        std.debug.print("Failed to create std plane", .{});
-        return;
-    };
+    var tui_ctx = mem.zeroes(c.tui_context);
+    c.tui_context_init(&tui_ctx);
 
     const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
 
-    var ctx = Context{ .rng = &rng, .ncplane = ncplane, .nc = nc };
+    var ctx = Context{ .rng = &rng, .tui = &tui_ctx };
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     var os = OperatingSystem.init(gpa.allocator());
@@ -277,12 +254,12 @@ pub fn main() !void {
 
         try os.tick(&ctx);
     }
-
+    //
     const phys_end_time = std.time.nanoTimestamp();
     const phys_time_elapsed: f128 = @floatFromInt(phys_end_time - phys_start_time);
+    _ = phys_time_elapsed;
 
-    _ = c.ncplane_printf(ctx.ncplane, "time elapsed = %f", phys_time_elapsed);
-    _ = c.notcurses_render(ctx.nc);
+    c.tui_context_deinit(ctx.tui);
 }
 
 test "OS sanity check" {

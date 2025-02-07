@@ -13,8 +13,8 @@ const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
 const c = @cImport({
-    @cDefine("TB_IMPL", {});
-    @cInclude("termbox2.h");
+    @cInclude("locale.h");
+    @cInclude("notcurses/notcurses.h");
 });
 
 const root = @import("./root.zig");
@@ -24,11 +24,13 @@ const Stream = root.Stream;
 const OperatingSystem = struct {
     fs: FileSystem,
     events: Events,
-    rng: *rand.DefaultPrng,
     allocator: mem.Allocator,
 
     const FileOp = union(enum) {
-        create: *const fn (fd: posix.OpenError!posix.fd_t) void,
+        create: *const fn (
+            fd: posix.OpenError!posix.fd_t,
+            ctx: *Context,
+        ) void,
         read: struct {
             fd: posix.fd_t,
             buf: *ArrayList(u8),
@@ -126,11 +128,10 @@ const OperatingSystem = struct {
         }
     }.compare);
 
-    fn init(allocator: mem.Allocator, rng: *rand.DefaultPrng) @This() {
+    fn init(allocator: mem.Allocator) @This() {
         return .{
             .fs = FileSystem.init(allocator),
             .events = Events.init(allocator, {}),
-            .rng = rng,
             .allocator = allocator,
         };
     }
@@ -141,13 +142,13 @@ const OperatingSystem = struct {
     }
 
     /// Nothing ever happens... until we advance the state of the OS.
-    fn tick(self: *@This()) !void {
+    fn tick(self: *@This(), ctx: *Context) !void {
         const event = self.events.removeOrNull() orelse return;
 
         switch (event.file_op) {
             .create => |callback| {
                 const fd = self.fs.create();
-                callback(fd);
+                callback(fd, ctx);
             },
             .read => |e| {
                 std.debug.print("{}", .{e});
@@ -163,10 +164,14 @@ const OperatingSystem = struct {
 
     fn create_file(
         self: *@This(),
-        callback: *const fn (fd: posix.OpenError!posix.fd_t) void,
+        callback: *const fn (
+            fd: posix.OpenError!posix.fd_t,
+            ctx: *Context,
+        ) void,
+        ctx: *Context,
     ) !void {
         const event: Event = .{
-            .priority = self.rng.random().int(u64),
+            .priority = ctx.rng.random().int(u64),
             .file_op = .{ .create = callback },
         };
         try self.events.add(event);
@@ -185,12 +190,16 @@ const OperatingSystem = struct {
     }
 };
 
-fn on_file_create(fd: posix.OpenError!posix.fd_t) void {
-    if (fd) |valid_fd| {
-        std.debug.print("fd created = {}\n", .{valid_fd});
-    } else |err| {
-        std.debug.print("ERROR creating file: {}\n", .{err});
+fn on_file_create(fd: posix.OpenError!posix.fd_t, context: *Context) void {
+    if (fd) |_| {
+        const str: [*c]const u8 = "fd created";
+        _ = c.ncplane_printf(context.ncplane, str);
+    } else |_| {
+        const str: [*c]const u8 = "fd create err";
+        _ = c.ncplane_printf(context.ncplane, str);
     }
+
+    _ = c.notcurses_render(context.nc);
 }
 
 fn on_file_delete(fd: posix.fd_t) void {
@@ -211,6 +220,12 @@ fn get_seed() !u64 {
     return std.crypto.random.int(u64);
 }
 
+const Context = struct {
+    rng: *rand.DefaultPrng,
+    ncplane: *c.struct_ncplane,
+    nc: *c.struct_notcurses,
+};
+
 // Configuration parameters for the DST
 // In one place for ease of tweaking
 const Config = struct {
@@ -222,42 +237,52 @@ const Config = struct {
 };
 
 pub fn main() !void {
+    const locale = c.setlocale(c.LC_ALL, "");
+    if (locale == null) {
+        std.debug.print("Failed to set locale", .{});
+        return;
+    }
+    const ncopt = mem.zeroes(c.notcurses_options);
+
+    const nc = c.notcurses_init(&ncopt, c.stdout) orelse {
+        std.debug.print("Failed to init ncurses", .{});
+        return;
+    };
+
+    const ncplane = c.notcurses_stdplane(nc) orelse {
+        std.debug.print("Failed to create std plane", .{});
+        return;
+    };
+
     const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
 
-    //std.debug.print("Deterministic Simulation Tester\n", .{});
-    //std.debug.print("seed = {}\n", .{seed});
-
-    var ev: c.tb_event = undefined;
-    _ = c.tb_init();
-    _ = c.tb_print(0, 0, 0, 0, "Deterministic Simulation Tester");
-    _ = c.tb_present();
-    _ = c.tb_poll_event(&ev);
-    _ = c.tb_shutdown();
+    var ctx = Context{ .rng = &rng, .ncplane = ncplane, .nc = nc };
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
-    var os = OperatingSystem.init(gpa.allocator(), &rng);
+    var os = OperatingSystem.init(gpa.allocator());
     defer os.deinit();
 
     const phys_start_time = std.time.nanoTimestamp();
 
     var time: u64 = 0;
-    while (time <= Config.max_sim_time_in_ms) : (time += 10) {
+    while (time <= 1000 * 60 * 60 * 24) : (time += 10) {
         if (Config.create_file_chance > rng.random().float(f64)) {
-            try os.create_file(&on_file_create);
+            try os.create_file(&on_file_create, &ctx);
         }
 
         //if (Config.delete_file_chance > rng.random().float(f64)) {
         //    try os.delete_file(&on_file_delete);
         //}
 
-        try os.tick();
+        try os.tick(&ctx);
     }
 
     const phys_end_time = std.time.nanoTimestamp();
     const phys_time_elapsed: f128 = @floatFromInt(phys_end_time - phys_start_time);
 
-    std.debug.print("Test complete in {e} ns", .{phys_time_elapsed});
+    _ = c.ncplane_printf(ctx.ncplane, "time elapsed = %f", phys_time_elapsed);
+    _ = c.notcurses_render(ctx.nc);
 }
 
 test "OS sanity check" {

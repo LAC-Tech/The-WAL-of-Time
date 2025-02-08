@@ -4,45 +4,55 @@ const mem = std.mem;
 const posix = std.posix;
 const testing = std.testing;
 
-const HashMap = std.HashMap;
+// TODO: test if determinstic
+// Looking at the code I am 95% sure..
+const AutoHashMap = std.AutoHashMap;
 
-const DeviceID = struct {};
-
-const DeterministicHashContext = struct {
-    seed: u64,
-
-    pub fn hash(self: @This(), key: DeviceID) u64 {
-        var hasher = std.hash.Wyhash.init(self.seed);
-        hasher.update(key);
-        return hasher.final();
-    }
-
-    pub const eql = std.hash_map.getAutoEqlFn(DeviceID, @This());
+const DeviceID = enum(u128) {
+    _,
+};
+const StreamID = enum(u128) {
+    _,
 };
 
 pub fn Stream(comptime OS: type) type {
-    const Remotes = HashMap(DeviceID, posix.fd_t, DeterministicHashContext, 80);
-
     return struct {
         os: *OS,
         local: posix.fd_t,
-        remotes: Remotes,
+        remotes: AutoHashMap(DeviceID, posix.fd_t),
+        lc: LogicalClock,
 
         pub fn init(
             os: *OS,
             fd: posix.fd_t,
             allocator: mem.Allocator,
-            seed: u64,
         ) @This() {
             return .{
                 .os = os,
                 .local = fd,
-                .remotes = Remotes.initContext(allocator, .{ .seed = seed }),
+                .remotes = AutoHashMap.init(allocator),
+                .lc = LogicalClock.init(allocator),
             };
         }
 
         pub fn deinit(self: *@This()) void {
             self.remotes.deinit();
+            self.lc.deinit();
         }
     };
+}
+
+//
+const LogicalClock = struct {
+    vv: AutoHashMap(DeviceID, u64),
+    fn init(allocator: mem.Allocator) @This() {
+        return .{ .vv = AutoHashMap.init(allocator) };
+    }
+    fn deinit(self: *@This()) void {
+        self.vv.deinit();
+    }
+};
+
+pub fn Node(comptime OS: type) type {
+    return struct { device_id: DeviceID, os: *OS };
 }

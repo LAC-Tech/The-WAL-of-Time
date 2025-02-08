@@ -228,22 +228,23 @@ const Config = struct {
 };
 
 pub fn main() !void {
-    var tui_ctx = mem.zeroes(c.tui_context);
-    c.tui_context_init(&tui_ctx);
-
     const seed = try get_seed();
     var rng = rand.DefaultPrng.init(seed);
-
+    var tui_ctx = mem.zeroes(c.tui_context);
+    c.tui_context_init(&tui_ctx);
     var ctx = Context{ .rng = &rng, .tui = &tui_ctx };
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     var os = OperatingSystem.init(gpa.allocator());
     defer os.deinit();
 
+    const stream = Stream(OperatingSystem).init(&os);
+    defer stream.deinit();
+
     const phys_start_time = std.time.nanoTimestamp();
 
     var time: u64 = 0;
-    while (time <= 1000 * 60 * 60 * 24) : (time += 10) {
+    while (time <= Config.max_sim_time_in_ms) : (time += 10) {
         if (Config.create_file_chance > rng.random().float(f64)) {
             try os.create_file(&on_file_create, &ctx);
         }
@@ -254,7 +255,7 @@ pub fn main() !void {
 
         try os.tick(&ctx);
     }
-    //
+
     const phys_end_time = std.time.nanoTimestamp();
     const phys_time_elapsed: f128 = @floatFromInt(phys_end_time - phys_start_time);
     _ = phys_time_elapsed;

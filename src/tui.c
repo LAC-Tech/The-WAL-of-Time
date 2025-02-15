@@ -26,6 +26,7 @@ void tui_context_init(tui_context* ctx) {
         .name = "topplane",
         .flags = 0
     };
+
     struct ncplane* titleplane = ncplane_create(stdplane, &opts);
 
     *ctx = (tui_context){

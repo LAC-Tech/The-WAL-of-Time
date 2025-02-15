@@ -4,55 +4,107 @@ const mem = std.mem;
 const posix = std.posix;
 const testing = std.testing;
 
-// TODO: test if determinstic
-// Looking at the code I am 95% sure..
-const AutoHashMap = std.AutoHashMap;
-
-const DeviceID = enum(u128) {
-    _,
-};
-const StreamID = enum(u128) {
-    _,
+pub const OsInput = union(enum) {
+    create,
+    read: struct { fd: posix.fd_t, buf: []u8, offset: usize },
+    append: struct { fd: posix.fd_t, data: []const u8 },
+    delete: posix.fd_t,
 };
 
-pub fn Stream(comptime OS: type) type {
-    return struct {
-        os: *OS,
-        local: posix.fd_t,
-        remotes: AutoHashMap(DeviceID, posix.fd_t),
-        lc: LogicalClock,
+pub const OsOutput = union(enum) {
+    create: posix.fd_t,
+    read: usize,
+    append: usize,
+    delete: bool,
+};
 
-        pub fn init(
-            os: *OS,
-            fd: posix.fd_t,
-            allocator: mem.Allocator,
-        ) @This() {
-            return .{
-                .os = os,
-                .local = fd,
-                .remotes = AutoHashMap.init(allocator),
-                .lc = LogicalClock.init(allocator),
-            };
-        }
-
-        pub fn deinit(self: *@This()) void {
-            self.remotes.deinit();
-            self.lc.deinit();
-        }
-    };
-}
-
+//// TODO: test if determinstic
+//// Looking at the code I am 95% sure..
+//const AutoHashMap = std.AutoHashMap;
+//const StringHashMapUnmanaged = std.StringHashMapUnmanaged;
 //
-const LogicalClock = struct {
-    vv: AutoHashMap(DeviceID, u64),
-    fn init(allocator: mem.Allocator) @This() {
-        return .{ .vv = AutoHashMap.init(allocator) };
-    }
-    fn deinit(self: *@This()) void {
-        self.vv.deinit();
-    }
-};
-
-pub fn Node(comptime OS: type) type {
-    return struct { device_id: DeviceID, os: *OS };
-}
+//pub fn DB(comptime OS: type) type {
+//    return struct {
+//        device_id: DeviceID,
+//        os: *OS,
+//        streams: StringHashMapUnmanaged(Stream(OS)),
+//        allocator: mem.Allocator,
+//
+//        pub fn init(
+//            device_id: DeviceID,
+//            os: *OS,
+//            allocator: mem.Allocator,
+//        ) @This() {
+//            return .{
+//                .device_id = device_id,
+//                .os = os,
+//                .streams = .{},
+//                .allocator = allocator,
+//            };
+//        }
+//
+//        pub fn deinit(self: *@This()) void {
+//            // TODO: who owns the keys?
+//            self.streams.deinit(self.allocator);
+//        }
+//
+//        fn stream_from_fd(ctx: anytype, fd: posix.OpenError!posix.fd_t) void {
+//            return Stream.init(ctx.os, fd);
+//        }
+//        pub fn create_stream(
+//            self: *@This(),
+//            comptime Ctx: type,
+//            ctx: *Ctx,
+//            stream_created: *const fn() void,
+//        ) !void {
+//            try self.os.create_file(ctx, stream_from_fd);
+//        }
+//    };
+//}
+//
+//fn Stream(comptime OS: type) type {
+//    return struct {
+//        os: *OS,
+//        local: posix.fd_t,
+//        remotes: AutoHashMap(DeviceID, posix.fd_t),
+//        lc: LogicalClock,
+//
+//        pub fn init(
+//            os: *OS,
+//            fd: posix.fd_t,
+//            allocator: mem.Allocator,
+//        ) @This() {
+//            return .{
+//                .os = os,
+//                .local = fd,
+//                .remotes = AutoHashMap.init(allocator),
+//                .lc = LogicalClock.init(allocator),
+//            };
+//        }
+//
+//        pub fn deinit(self: *@This()) void {
+//            self.remotes.deinit();
+//            self.lc.deinit();
+//        }
+//    };
+//}
+//
+//pub const DeviceID = enum(u128) {
+//    _,
+//    pub fn init(rng: anytype) @This() {
+//        return @enumFromInt(rng.random().int(u128));
+//    }
+//};
+//const StreamID = enum(u128) { _ };
+//
+//// Thin wrapper; there are more space efficient logical clocks I need to
+//// investigate, ie interval tree clocks.
+//const LogicalClock = struct {
+//    vv: AutoHashMap(DeviceID, u64),
+//    fn init(allocator: mem.Allocator) @This() {
+//        return .{ .vv = AutoHashMap.init(allocator) };
+//    }
+//    fn deinit(self: *@This()) void {
+//        self.vv.deinit();
+//    }
+//};

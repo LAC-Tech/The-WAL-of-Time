@@ -93,6 +93,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe_unit_tests.linkLibC();
+    exe_unit_tests.linkSystemLibrary("notcurses");
+    exe_unit_tests.addCSourceFile(.{
+        .file = b.path("src/tui.c"),
+        .flags = &.{
+            "-std=c23", // Specify C standard
+            "-Wall", // Turn on all warnings
+            "-Wextra", // Additional warnings
+        },
+    });
+    exe_unit_tests.addIncludePath(b.path("src/"));
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

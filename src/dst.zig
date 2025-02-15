@@ -8,135 +8,39 @@ const posix = std.posix;
 const rand = std.rand;
 const testing = std.testing;
 
-const ArrayList = std.ArrayList;
+const ArrayListUnmanged = std.ArrayListUnmanaged;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
-const c = @cImport({
-    @cInclude("tui.h");
-});
+//const c = @cImport({
+//    @cInclude("tui.h");
+//});
 
 const root = @import("./root.zig");
-const Stream = root.Stream;
 
-/// Simulating an OS with async IO, and append-only files
-const OperatingSystem = struct {
-    fs: FileSystem,
+const OS = struct {
+    fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    allocator: mem.Allocator,
+    receiver: *const fn (ctx: *Context, msg: root.OsOutput) void,
+    allocator: std.mem.Allocator,
 
-    const FileOp = union(enum) {
-        create: *const fn (
-            fd: posix.OpenError!posix.fd_t,
-            ctx: *Context,
-        ) void,
-        read: struct {
-            fd: posix.fd_t,
-            buf: *ArrayList(u8),
-            len: usize,
-            offset: usize,
-            callback: *const fn (bytes_read: usize) void,
-        },
-        append: struct {
-            fd: posix.fd_t,
-            data: []const u8,
-            callback: *const fn (
-                bytes_appended: posix.WriteError!usize,
-            ) void,
-        },
-        delete: struct {
-            fd: posix.fd_t,
-            callback: *const fn (success: bool) void,
-        },
-    };
-
-    const AppendOnlyFile = struct {
-        data: ArrayList(u8),
-        fn init(allocator: mem.Allocator) @This() {
-            return .{ .data = ArrayList(u8).init(allocator) };
-        }
-
-        fn deinit(self: *@This()) void {
-            self.data.deinit();
-        }
-
-        fn read(
-            self: @This(),
-            buf: *ArrayList(u8),
-            len: usize,
-            offset: usize,
-        ) !usize {
-            try buf.appendSlice(self.data.items[offset .. offset + len]);
-            // TODO: randomly fail to read all data expected?
-            return len;
-        }
-
-        fn append(
-            self: *@This(),
-            data: []const u8,
-        ) posix.WriteError!usize {
-            self.data.appendSlice(data) catch return error.NoSpaceLeft;
-            // TODO: randomly fail to append all data?
-            return data.len;
-        }
-    };
-
-    // TODO: this approach means we allocate a lot.
-    // Ideally, file system should be a flat array of bytes
-    const FileSystem = struct {
-        files: ArrayList(AppendOnlyFile),
-        allocator: mem.Allocator,
-
-        fn init(allocator: mem.Allocator) @This() {
-            return .{
-                .files = ArrayList(AppendOnlyFile).init(allocator),
-                .allocator = allocator,
-            };
-        }
-
-        fn deinit(self: *@This()) void {
-            self.files.deinit();
-        }
-
-        fn create(self: *@This()) posix.OpenError!posix.fd_t {
-            const fd = self.files.items.len;
-            const file = AppendOnlyFile.init(self.allocator);
-            self.files.append(file) catch return posix.OpenError.NoSpaceLeft;
-            return @intCast(fd);
-        }
-
-        fn append(
-            self: *@This(),
-            fd: posix.fd_t,
-            data: []const u8,
-        ) posix.WriteError!usize {
-            const index: usize = @intCast(fd);
-            if (self.files.items.len > index) {
-                var aof = self.files.items[index];
-                return aof.append(data);
-            } else {
-                return posix.WriteError.InvalidArgument;
-            }
-        }
-    };
-
-    const Event = struct { priority: u64, file_op: FileOp };
-    const Events = PriorityQueue(Event, void, struct {
-        fn compare(_: void, a: Event, b: Event) math.Order {
-            return math.order(a.priority, b.priority);
-        }
-    }.compare);
-
-    fn init(allocator: mem.Allocator) @This() {
+    fn init(
+        allocator: std.mem.Allocator,
+        receiver: *const fn (ctx: *Context, msg: root.OsOutput) void,
+    ) !@This() {
         return .{
-            .fs = FileSystem.init(allocator),
+            .fs = try ArrayListUnmanged(ArrayListUnmanged(u8)).initCapacity(
+                allocator,
+                90_000,
+            ),
             .events = Events.init(allocator, {}),
+            .receiver = receiver,
             .allocator = allocator,
         };
     }
 
     fn deinit(self: *@This()) void {
-        self.fs.deinit();
+        self.fs.deinit(self.allocator);
         self.events.deinit();
     }
 
@@ -145,58 +49,93 @@ const OperatingSystem = struct {
         const event = self.events.removeOrNull() orelse return;
 
         switch (event.file_op) {
-            .create => |callback| {
-                const fd = self.fs.create();
-                callback(fd, ctx);
+            .create => {
+                const fd = self.fs.items.len;
+                const file = ArrayListUnmanged(u8){};
+                try self.fs.append(self.allocator, file);
+                self.receiver(ctx, .{ .create = @intCast(fd) });
             },
-            .read => |e| {
-                std.debug.print("{}", .{e});
+            .read => |_| {
+                @panic("TODO: Read");
             },
-            .append => |e| {
-                e.callback(self.fs.append(e.fd, e.data));
+            .append => |_| {
+                @panic("TODO: Append");
             },
-            .delete => |e| {
-                std.debug.print("TODO impl delete {}\n", .{e});
+            .delete => |_| {
+                @panic("TODO: Delete");
             },
         }
     }
 
-    fn create_file(
-        self: *@This(),
-        callback: *const fn (
-            fd: posix.OpenError!posix.fd_t,
-            ctx: *Context,
-        ) void,
-        ctx: *Context,
-    ) !void {
-        const event: Event = .{
-            .priority = ctx.rng.random().int(u64),
-            .file_op = .{ .create = callback },
-        };
-        try self.events.add(event);
-    }
-
-    fn delete_file(
-        self: *@This(),
-        fd: posix.fd_t,
-        callback: *const fn (fd: posix.fd_t) void,
-    ) !void {
-        const event: Event = .{
-            .priority = self.rng.random().int(u64),
-            .file_op = .{ .fd = fd, .callback = callback },
-        };
+    fn send(self: *@This(), ctx: *Context, msg: root.OsInput) !void {
+        const event = .{ .priority = ctx.rng.random().int(u64), .file_op = msg };
         try self.events.add(event);
     }
 };
 
-fn on_file_create(fd: posix.OpenError!posix.fd_t, context: *Context) void {
-    _ = fd catch -1;
-    _ = context;
+fn on_output_msg(ctx: *Context, msg: root.OsOutput) void {
+    ctx.update_stats(msg);
 }
 
-fn on_file_delete(fd: posix.fd_t) void {
-    std.debug.print("fd {} ここで死ね", .{fd});
-}
+const Event = struct { priority: u64, file_op: root.OsInput };
+const Events = PriorityQueue(Event, void, struct {
+    fn compare(_: void, a: Event, b: Event) math.Order {
+        return math.order(a.priority, b.priority);
+    }
+}.compare);
+
+const Context = struct {
+    rng: rand.DefaultPrng,
+    stats: struct {
+        os_files_created: u64 = 0,
+    },
+
+    fn update_stats(self: *@This(), msg: root.OsOutput) void {
+        switch (msg) {
+            .create => {
+                self.stats.os_files_created += 1;
+            },
+            else => @panic("TODO: collect more stats"),
+        }
+    }
+};
+
+const Simulator = struct {
+    os: OS,
+    ctx: Context,
+
+    fn init(allocator: mem.Allocator, seed: u64) !@This() {
+        return .{
+            .os = try OS.init(allocator, on_output_msg),
+            .ctx = .{
+                .rng = rand.DefaultPrng.init(seed),
+                .stats = .{},
+            },
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.os.deinit();
+    }
+
+    fn tick(self: *@This()) !void {
+        if (Config.create_file_chance > self.ctx.rng.random().float(f64)) {
+            try self.os.send(&self.ctx, .create);
+        }
+
+        try self.os.tick(&self.ctx);
+    }
+};
+
+// Configuration parameters for the DST
+// In one place for ease of tweaking
+const Config = struct {
+    const max_sim_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours
+
+    // TODO: these chances are temporary; will later be driven by actual db
+    const create_file_chance = 0.1;
+    const delete_file_chance = 0.05;
+};
 
 fn get_seed() !u64 {
     var args = std.process.args();
@@ -212,85 +151,54 @@ fn get_seed() !u64 {
     return std.crypto.random.int(u64);
 }
 
-const Context = struct {
-    rng: *rand.DefaultPrng,
-    tui: *c.tui_context,
-};
-
-// Configuration parameters for the DST
-// In one place for ease of tweaking
-const Config = struct {
-    const max_sim_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours
-
-    // TODO: these chances are temporary; will later be driven by actual db
-    const create_file_chance = 0.1;
-    const delete_file_chance = 0.05;
-};
-
 pub fn main() !void {
+    std.debug.print("Deterministic Simulation Tester\n", .{});
     const seed = try get_seed();
-    var rng = rand.DefaultPrng.init(seed);
-    var tui_ctx = mem.zeroes(c.tui_context);
-    c.tui_context_init(&tui_ctx);
-    var ctx = Context{ .rng = &rng, .tui = &tui_ctx };
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
-    var os = OperatingSystem.init(gpa.allocator());
-    defer os.deinit();
 
-    const stream = Stream(OperatingSystem).init(&os);
-    defer stream.deinit();
+    var sim = try Simulator.init(gpa.allocator(), seed);
 
-    const phys_start_time = std.time.nanoTimestamp();
+    const phys_start_time = std.time.microTimestamp();
 
     var time: u64 = 0;
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
-        if (Config.create_file_chance > rng.random().float(f64)) {
-            try os.create_file(&on_file_create, &ctx);
-        }
-
-        //if (Config.delete_file_chance > rng.random().float(f64)) {
-        //    try os.delete_file(&on_file_delete);
-        //}
-
-        try os.tick(&ctx);
+        try sim.tick();
     }
 
-    const phys_end_time = std.time.nanoTimestamp();
-    const phys_time_elapsed: f128 = @floatFromInt(phys_end_time - phys_start_time);
-    _ = phys_time_elapsed;
+    const phys_end_time = std.time.microTimestamp();
+    const phys_time_elapsed: f128 =
+        @floatFromInt(phys_end_time - phys_start_time);
 
-    c.tui_context_deinit(ctx.tui);
-}
-
-test "OS sanity check" {
-    const seed = 0;
-    var rng = rand.DefaultPrng.init(seed);
-    var os = OperatingSystem.init(testing.allocator, &rng);
-    defer os.deinit();
-    try os.create_file(&on_file_create);
-    _ = try os.tick();
-
-    var stream = Stream(OperatingSystem).init(
-        &os,
-        -1,
-        testing.allocator,
-        seed,
+    std.debug.print(
+        "Stats: OS files created: {}\n",
+        .{sim.ctx.stats.os_files_created},
     );
-    defer stream.deinit();
+    std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
 }
 
-test "Append-only File sanity check" {
-    var aof = OperatingSystem.AppendOnlyFile.init(testing.allocator);
-    defer aof.deinit();
-    const text = "They're making the last film; they say it's the best.";
+//test "OS sanity check" {
+//    const rng = rand.DefaultPrng.init(0);
+//    // DON'T initialize
+//    var ctx = Context{ .rng = rng, .tui = tui_ctx };
+//
+//    var os = OS.init(testing.allocator);
+//    defer os.deinit();
+//    try os.send(&ctx, root.OsInput.create);
+//    _ = try os.tick(&ctx);
+//}
 
-    const bytes_appended = try aof.append(text);
-    try testing.expectEqual(bytes_appended, text.len);
-
-    var buf = ArrayList(u8).init(testing.allocator);
-    defer buf.deinit();
-    const bytes_written = try aof.read(&buf, text.len, 0);
-    try testing.expectEqual(bytes_written, text.len);
-    try testing.expectEqualDeep(buf.items, text);
-}
+//test "Append-only File sanity check" {
+//    var aof = OperatingSystem.AppendOnlyFile.init(testing.allocator);
+//    defer aof.deinit();
+//    const text = "They're making the last film; they say it's the best.";
+//
+//    const bytes_appended = try aof.append(text);
+//    try testing.expectEqual(bytes_appended, text.len);
+//
+//    var buf = ArrayList(u8).init(testing.allocator);
+//    defer buf.deinit();
+//    const bytes_written = try aof.read(&buf, text.len, 0);
+//    try testing.expectEqual(bytes_written, text.len);
+//    try testing.expectEqualDeep(buf.items, text);
+//}

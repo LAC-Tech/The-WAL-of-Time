@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
 
     // required by notcurses
     exe.linkLibC();
-    exe.linkSystemLibrary("notcurses");
+    exe.linkSystemLibrary("notcurses-core");
     exe.addCSourceFile(.{
         .file = b.path("src/tui.c"),
         .flags = &.{
@@ -94,7 +94,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe_unit_tests.linkLibC();
-    exe_unit_tests.linkSystemLibrary("notcurses");
+    exe_unit_tests.linkSystemLibrary("notcurses-core");
     exe_unit_tests.addCSourceFile(.{
         .file = b.path("src/tui.c"),
         .flags = &.{

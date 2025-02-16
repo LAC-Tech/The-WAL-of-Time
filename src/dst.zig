@@ -12,10 +12,6 @@ const ArrayListUnmanged = std.ArrayListUnmanaged;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
-//const c = @cImport({
-//    @cInclude("tui.h");
-//});
-
 const root = @import("./root.zig");
 
 const OS = struct {
@@ -28,12 +24,14 @@ const OS = struct {
         allocator: std.mem.Allocator,
         receiver: *const fn (ctx: *Context, msg: root.OsOutput) void,
     ) !@This() {
+        const events = Events.init(allocator, {});
+        //try events.ensureTotalCapacity(256);
         return .{
             .fs = try ArrayListUnmanged(ArrayListUnmanged(u8)).initCapacity(
                 allocator,
                 90_000,
             ),
-            .events = Events.init(allocator, {}),
+            .events = events,
             .receiver = receiver,
             .allocator = allocator,
         };
@@ -43,6 +41,13 @@ const OS = struct {
         self.fs.deinit(self.allocator);
         self.events.deinit();
     }
+
+    const Event = struct { priority: u64, file_op: root.OsInput };
+    const Events = PriorityQueue(Event, void, struct {
+        fn compare(_: void, a: Event, b: Event) math.Order {
+            return math.order(a.priority, b.priority);
+        }
+    }.compare);
 
     /// Nothing ever happens... until we advance the state of the OS.
     fn tick(self: *@This(), ctx: *Context) !void {
@@ -68,7 +73,10 @@ const OS = struct {
     }
 
     fn send(self: *@This(), ctx: *Context, msg: root.OsInput) !void {
-        const event = .{ .priority = ctx.rng.random().int(u64), .file_op = msg };
+        const event = .{
+            .priority = ctx.rng.random().int(u64),
+            .file_op = msg,
+        };
         try self.events.add(event);
     }
 };
@@ -76,13 +84,6 @@ const OS = struct {
 fn on_output_msg(ctx: *Context, msg: root.OsOutput) void {
     ctx.update_stats(msg);
 }
-
-const Event = struct { priority: u64, file_op: root.OsInput };
-const Events = PriorityQueue(Event, void, struct {
-    fn compare(_: void, a: Event, b: Event) math.Order {
-        return math.order(a.priority, b.priority);
-    }
-}.compare);
 
 const Context = struct {
     rng: rand.DefaultPrng,
@@ -120,7 +121,7 @@ const Simulator = struct {
 
     fn tick(self: *@This()) !void {
         if (Config.create_file_chance > self.ctx.rng.random().float(f64)) {
-            try self.os.send(&self.ctx, .create);
+            //try self.os.send(&self.ctx, .create);
         }
 
         try self.os.tick(&self.ctx);
@@ -177,28 +178,8 @@ pub fn main() !void {
     std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
 }
 
-//test "OS sanity check" {
-//    const rng = rand.DefaultPrng.init(0);
-//    // DON'T initialize
-//    var ctx = Context{ .rng = rng, .tui = tui_ctx };
-//
-//    var os = OS.init(testing.allocator);
-//    defer os.deinit();
-//    try os.send(&ctx, root.OsInput.create);
-//    _ = try os.tick(&ctx);
-//}
-
-//test "Append-only File sanity check" {
-//    var aof = OperatingSystem.AppendOnlyFile.init(testing.allocator);
-//    defer aof.deinit();
-//    const text = "They're making the last film; they say it's the best.";
-//
-//    const bytes_appended = try aof.append(text);
-//    try testing.expectEqual(bytes_appended, text.len);
-//
-//    var buf = ArrayList(u8).init(testing.allocator);
-//    defer buf.deinit();
-//    const bytes_written = try aof.read(&buf, text.len, 0);
-//    try testing.expectEqual(bytes_written, text.len);
-//    try testing.expectEqualDeep(buf.items, text);
-//}
+test "sim lifetime" {
+    var sim = try Simulator.init(testing.allocator, 0);
+    _ = try sim.tick();
+    defer sim.deinit();
+}

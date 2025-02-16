@@ -13,7 +13,7 @@ void tui_context_init(tui_context* ctx) {
     setlocale(LC_ALL, "");
     notcurses_options ncopt = {0};
 
-    struct notcurses* nc = notcurses_init(&ncopt, stdout);
+    struct notcurses* nc = notcurses_core_init(&ncopt, stdout);
     struct ncplane* stdplane = notcurses_stdplane(nc);
     notcurses_term_dim_yx(nc, &ctx->height, &ctx->width);
 

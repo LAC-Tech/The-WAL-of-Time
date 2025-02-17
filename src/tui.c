@@ -36,7 +36,7 @@ void tui_init(tui* ctx) {
     ncplane_set_styles(ctx->titleplane, NCSTYLE_BOLD);
     ncplane_set_fg_rgb(ctx->titleplane, 0xFFFFFF);
     ncplane_set_bg_rgb(ctx->titleplane, 0x000000); 
-    ncplane_putstr_aligned(ctx->titleplane, 0, NCALIGN_CENTER, text);
+    ncplane_putstr_yx(ctx->titleplane, 0, 1, text);
 
     ncplane_perimeter_rounded(ctx->stdplane, 0, 0, 0);
 
@@ -59,13 +59,20 @@ void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
     // Ensure hours stay within 24-hour format (0-23)
     hours = hours % 24;
 
+    ncplane_printf_yx(
+        ctx->titleplane,
+        0,
+        ctx->width - 11, // Just like on our computers!!!
+        " %02ju:%02ju:%02ju ",
+        hours, minutes, seconds
+    );
+
     ncplane_printf_aligned(
         ctx->stdplane,
         ctx->height / 2,
         NCALIGN_CENTER,
-        "Files created = %ju, Time = %02ju:%02ju:%02ju",
-        stats->os_files_created,
-        hours, minutes, seconds
+        "Files created = %ju",
+        stats->os_files_created
     );
 
     notcurses_render(ctx->nc);

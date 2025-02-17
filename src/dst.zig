@@ -14,6 +14,10 @@ const PriorityQueue = std.PriorityQueue;
 
 const root = @import("./root.zig");
 
+const c = @cImport({
+    @cInclude("tui.c");
+});
+
 const OS = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
@@ -121,7 +125,7 @@ const Simulator = struct {
 
     fn tick(self: *@This()) !void {
         if (Config.create_file_chance > self.ctx.rng.random().float(f64)) {
-            //try self.os.send(&self.ctx, .create);
+            try self.os.send(&self.ctx, .create);
         }
 
         try self.os.tick(&self.ctx);
@@ -157,6 +161,14 @@ pub fn main() !void {
     const seed = try get_seed();
 
     var gpa = heap.GeneralPurposeAllocator(.{}){};
+
+    const ncopt = mem.zeroes(c.notcurses_options);
+    const nc = c.notcurses_core_init(&ncopt, c.stdout);
+    const stdplane = c.notcurses_stdplane(nc);
+    //const str: [*:0]const u8 = "HELLO WORLD";
+    _ = c.ncplane_putc(stdplane, 'x');
+    _ = c.notcurses_render(nc);
+    _ = c.notcurses_get(nc, null, null);
 
     var sim = try Simulator.init(gpa.allocator(), seed);
 

@@ -1,3 +1,9 @@
+/*
+ * Visual display for the Deterministic Simulation Tester
+ * Should take in raw data, and how it's displayed (including messages) is kept
+ * in here.
+ */
+
 #ifndef TUI_H
 #define TUI_H	
 

@@ -41,7 +41,7 @@ void tui_context_init(tui_context* ctx) {
 
     //ncplane_set_styles(ctx->titleplane, NCSTYLE_BOLD);
 	ncplane_set_fg_rgb(ctx->titleplane, 0x000000);
-	ncplane_set_bg_rgb(ctx->titleplane, 0xFFFFFF); 
+    ncplane_set_bg_rgb(ctx->titleplane, 0xFFFFFF); 
     ncplane_putstr_aligned(ctx->titleplane, 0, NCALIGN_CENTER, text);
 
     notcurses_render(nc);

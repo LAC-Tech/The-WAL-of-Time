@@ -33,7 +33,7 @@ const OS = struct {
         return .{
             .fs = try ArrayListUnmanged(ArrayListUnmanged(u8)).initCapacity(
                 allocator,
-                90_000,
+                1_000_000,
             ),
             .events = events,
             .receiver = receiver,

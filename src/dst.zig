@@ -91,10 +91,7 @@ fn on_output_msg(ctx: *Context, msg: root.OsOutput) void {
 
 const Context = struct {
     rng: rand.DefaultPrng,
-    stats: struct {
-        os_files_created: u64 = 0,
-    },
-
+    stats: c.stats,
     fn update_stats(self: *@This(), msg: root.OsOutput) void {
         switch (msg) {
             .create => {
@@ -114,7 +111,7 @@ const Simulator = struct {
             .os = try OS.init(allocator, on_output_msg),
             .ctx = .{
                 .rng = rand.DefaultPrng.init(seed),
-                .stats = .{},
+                .stats = .{ .os_files_created = 0 },
             },
         };
     }
@@ -164,22 +161,30 @@ pub fn main() !void {
 
     var sim = try Simulator.init(gpa.allocator(), seed);
 
-    const phys_start_time = std.time.microTimestamp();
+    //const phys_start_time = std.time.microTimestamp();
+
+    var tui = mem.zeroes(c.tui);
+    c.tui_init(&tui);
 
     var time: u64 = 0;
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
         try sim.tick();
+        if (time % 1000 == 0) {
+            c.tui_render_stats(&tui, &sim.ctx.stats);
+        }
     }
 
-    const phys_end_time = std.time.microTimestamp();
-    const phys_time_elapsed: f128 =
-        @floatFromInt(phys_end_time - phys_start_time);
+    //const phys_end_time = std.time.microTimestamp();
+    //const phys_time_elapsed: f128 =
+    //    @floatFromInt(phys_end_time - phys_start_time);
 
-    std.debug.print(
-        "Stats: OS files created: {}\n",
-        .{sim.ctx.stats.os_files_created},
-    );
-    std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
+    //std.debug.print(
+    //    "Stats: OS files created: {}\n",
+    //    .{sim.ctx.stats.os_files_created},
+    //);
+    //std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
+    //
+    c.tui_deinit(&tui);
 }
 
 test "sim lifetime" {

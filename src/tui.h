@@ -1,6 +1,7 @@
 #ifndef TUI_H
 #define TUI_H
 
+#include <stdint.h>
 #include <notcurses/notcurses.h>
 
 typedef struct {
@@ -9,9 +10,14 @@ typedef struct {
 	struct ncplane* titleplane; 
 	unsigned int width;
 	unsigned int height;
-} tui_context;
+} tui;
 
-void tui_context_init(tui_context* ctx);
-void tui_context_deinit(tui_context* ctx); 
+typedef struct {
+    uint64_t os_files_created;
+} stats;
+
+void tui_init(tui* ctx);
+void tui_deinit(tui* ctx); 
+void tui_render_stats(tui* ctx, stats* stats);
 
 #endif // TUI_H

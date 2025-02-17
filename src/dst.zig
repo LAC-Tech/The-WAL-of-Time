@@ -170,7 +170,7 @@ pub fn main() !void {
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
         try sim.tick();
         if (time % 1000 == 0) {
-            c.tui_render_stats(&tui, &sim.ctx.stats);
+            c.tui_sim_render(&tui, &sim.ctx.stats, time);
         }
     }
 

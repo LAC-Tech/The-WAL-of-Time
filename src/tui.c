@@ -50,13 +50,23 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-void tui_render_stats(tui* ctx, stats* stats) {
+void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
+    uint64_t seconds_total = time_in_ms / 1000;
+    uint64_t hours = seconds_total / 3600;
+    uint64_t minutes = (seconds_total % 3600) / 60;
+    uint64_t seconds = seconds_total % 60;
+
+    // Ensure hours stay within 24-hour format (0-23)
+    hours = hours % 24;
+
     ncplane_printf_aligned(
-            ctx->stdplane, 
-            ctx->height / 2, 
-            NCALIGN_CENTER,
-            "Files created = %ju\n",
-            stats->os_files_created);
-    
+        ctx->stdplane,
+        ctx->height / 2,
+        NCALIGN_CENTER,
+        "Files created = %ju, Time = %02ju:%02ju:%02ju",
+        stats->os_files_created,
+        hours, minutes, seconds
+    );
+
     notcurses_render(ctx->nc);
 }

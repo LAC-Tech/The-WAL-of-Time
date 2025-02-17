@@ -1,5 +1,5 @@
 #ifndef TUI_H
-#define TUI_H
+#define TUI_H	
 
 #include <stdint.h>
 #include <notcurses/notcurses.h>
@@ -18,6 +18,6 @@ typedef struct {
 
 void tui_init(tui* ctx);
 void tui_deinit(tui* ctx); 
-void tui_render_stats(tui* ctx, stats* stats);
+void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms);
 
 #endif // TUI_H

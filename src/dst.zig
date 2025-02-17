@@ -78,7 +78,7 @@ const OS = struct {
 
     fn send(self: *@This(), ctx: *Context, msg: root.OsInput) !void {
         const event = .{
-            .priority = ctx.rng.random().int(u64),
+            .priority = ctx.random.int(u64),
             .file_op = msg,
         };
         try self.events.add(event);
@@ -90,7 +90,7 @@ fn on_output_msg(ctx: *Context, msg: root.OsOutput) void {
 }
 
 const Context = struct {
-    rng: rand.DefaultPrng,
+    random: std.Random,
     stats: c.stats,
     fn update_stats(self: *@This(), msg: root.OsOutput) void {
         switch (msg) {
@@ -106,11 +106,11 @@ const Simulator = struct {
     os: OS,
     ctx: Context,
 
-    fn init(allocator: mem.Allocator, seed: u64) !@This() {
+    fn init(allocator: mem.Allocator, random: std.Random) !@This() {
         return .{
             .os = try OS.init(allocator, on_output_msg),
             .ctx = .{
-                .rng = rand.DefaultPrng.init(seed),
+                .random = random,
                 .stats = .{ .os_files_created = 0 },
             },
         };
@@ -121,7 +121,7 @@ const Simulator = struct {
     }
 
     fn tick(self: *@This()) !void {
-        if (Config.create_file_chance > self.ctx.rng.random().float(f64)) {
+        if (Config.create_file_chance > self.ctx.random.float(f64)) {
             try self.os.send(&self.ctx, .create);
         }
 
@@ -192,8 +192,9 @@ pub fn main() !void {
 
     std.debug.print("Seed = {}\n", .{seed});
 
+    var rng = rand.DefaultPrng.init(seed);
     var gpa = heap.GeneralPurposeAllocator(.{}){};
-    var sim = try Simulator.init(gpa.allocator(), seed);
+    var sim = try Simulator.init(gpa.allocator(), rng.random());
 
     try fp(&sim);
 }

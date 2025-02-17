@@ -2,6 +2,9 @@
  * Visual display for the Deterministic Simulation Tester
  * Should take in raw data, and how it's displayed (including messages) is kept
  * in here.
+ *
+ * Q: Why not use notcurses direclty in zig via @cImport?
+ * A: The header file is too gnarly for zig to handle, hence this shim in C.
  */
 
 #ifndef TUI_H

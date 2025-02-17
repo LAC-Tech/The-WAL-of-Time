@@ -139,27 +139,7 @@ const Config = struct {
     const delete_file_chance = 0.05;
 };
 
-fn get_seed() !u64 {
-    var args = std.process.args();
-    _ = args.skip();
-
-    if (args.next()) |arg| {
-        return std.fmt.parseInt(u64, arg, 10) catch |err| {
-            std.debug.print("Failed to parse seed: {}\n", .{err});
-            return err;
-        };
-    }
-
-    return std.crypto.random.int(u64);
-}
-
-pub fn main() !void {
-    const seed = try get_seed();
-    var gpa = heap.GeneralPurposeAllocator(.{}){};
-    var sim = try Simulator.init(gpa.allocator(), seed);
-
-    //const phys_start_time = std.time.microTimestamp();
-
+fn live_simulation(sim: *Simulator) !void {
     var tui = mem.zeroes(c.tui);
     c.tui_init(&tui);
 
@@ -171,17 +151,51 @@ pub fn main() !void {
         }
     }
 
-    //const phys_end_time = std.time.microTimestamp();
-    //const phys_time_elapsed: f128 =
-    //    @floatFromInt(phys_end_time - phys_start_time);
-
-    //std.debug.print(
-    //    "Stats: OS files created: {}\n",
-    //    .{sim.ctx.stats.os_files_created},
-    //);
-    //std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
-    //
     c.tui_deinit(&tui);
+}
+
+fn bg_simulation(sim: *Simulator) !void {
+    const phys_start_time = std.time.microTimestamp();
+
+    var time: u64 = 0;
+    while (time <= Config.max_sim_time_in_ms) : (time += 10) {
+        try sim.tick();
+    }
+
+    const phys_end_time = std.time.microTimestamp();
+    const phys_time_elapsed: f128 =
+        @floatFromInt(phys_end_time - phys_start_time);
+
+    std.debug.print(
+        "Stats: OS files created: {}\n",
+        .{sim.ctx.stats.os_files_created},
+    );
+    std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
+}
+
+pub fn main() !void {
+    var args = std.process.args();
+    _ = args.skip();
+
+    const fp = blk: {
+        if (args.next()) |m| {
+            if (mem.eql(u8, m, "bg")) break :blk &bg_simulation;
+            if (mem.eql(u8, m, "live")) break :blk &live_simulation;
+        }
+        @panic("First arg must be 'live' or 'bg'");
+    };
+
+    const seed = if (args.next()) |arg|
+        try std.fmt.parseInt(u64, arg, 10)
+    else
+        std.crypto.random.int(u64);
+
+    std.debug.print("Seed = {}\n", .{seed});
+
+    var gpa = heap.GeneralPurposeAllocator(.{}){};
+    var sim = try Simulator.init(gpa.allocator(), seed);
+
+    try fp(&sim);
 }
 
 test "sim lifetime" {

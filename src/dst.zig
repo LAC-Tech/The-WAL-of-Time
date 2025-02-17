@@ -154,11 +154,8 @@ fn get_seed() !u64 {
 }
 
 pub fn main() !void {
-    std.debug.print("Deterministic Simulation Tester\n", .{});
     const seed = try get_seed();
-
     var gpa = heap.GeneralPurposeAllocator(.{}){};
-
     var sim = try Simulator.init(gpa.allocator(), seed);
 
     //const phys_start_time = std.time.microTimestamp();

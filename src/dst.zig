@@ -146,7 +146,7 @@ fn live_simulation(sim: *Simulator) !void {
     var time: u64 = 0;
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
         try sim.tick();
-        if (time % 1000 == 0) {
+        if (time % (1000 * 60) == 0) {
             c.tui_sim_render(&tui, &sim.ctx.stats, time);
         }
     }

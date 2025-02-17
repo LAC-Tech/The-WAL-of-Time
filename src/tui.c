@@ -54,7 +54,6 @@ void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
     uint64_t seconds_total = time_in_ms / 1000;
     uint64_t hours = seconds_total / 3600;
     uint64_t minutes = (seconds_total % 3600) / 60;
-    uint64_t seconds = seconds_total % 60;
 
     // Ensure hours stay within 24-hour format (0-23)
     hours = hours % 24;
@@ -62,9 +61,9 @@ void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
     ncplane_printf_yx(
         ctx->titleplane,
         0,
-        ctx->width - 11, // Just like on our computers!!!
-        " %02ju:%02ju:%02ju ",
-        hours, minutes, seconds
+        ctx->width - 8, // Just like on our computers!!!
+        " %02ju:%02ju ",
+        hours, minutes
     );
 
     ncplane_printf_aligned(

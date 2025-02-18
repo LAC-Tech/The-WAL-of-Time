@@ -12,7 +12,7 @@ const ArrayListUnmanged = std.ArrayListUnmanaged;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
-const root = @import("./root.zig");
+const lib = @import("./root.zig");
 
 const c = @cImport({
     @cInclude("tui.h");
@@ -21,12 +21,12 @@ const c = @cImport({
 const OS = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    receiver: *const fn (ctx: *Context, msg: root.OsOutput) void,
+    receiver: *const fn (ctx: *Context, msg: lib.OsOutput) void,
     allocator: std.mem.Allocator,
 
-    fn init(
+    pub fn init(
         allocator: std.mem.Allocator,
-        receiver: *const fn (ctx: *Context, msg: root.OsOutput) void,
+        receiver: *const fn (ctx: *Context, msg: lib.OsOutput) void,
     ) !@This() {
         const events = Events.init(allocator, {});
         //try events.ensureTotalCapacity(256);
@@ -46,7 +46,11 @@ const OS = struct {
         self.events.deinit();
     }
 
-    const Event = struct { priority: u64, file_op: root.OsInput };
+    const Event = struct {
+        priority: u64,
+        file_op: lib.OsInput,
+        user_data: u64,
+    };
     const Events = PriorityQueue(Event, void, struct {
         fn compare(_: void, a: Event, b: Event) math.Order {
             return math.order(a.priority, b.priority);
@@ -76,23 +80,29 @@ const OS = struct {
         }
     }
 
-    fn send(self: *@This(), ctx: *Context, msg: root.OsInput) !void {
+    fn send(
+        self: *@This(),
+        ctx: *Context,
+        msg: lib.OsInput,
+        user_data: u64,
+    ) !void {
         const event = .{
             .priority = ctx.random.int(u64),
+            .user_data = user_data,
             .file_op = msg,
         };
         try self.events.add(event);
     }
 };
 
-fn on_output_msg(ctx: *Context, msg: root.OsOutput) void {
+fn on_output_msg(ctx: *Context, msg: lib.OsOutput) void {
     ctx.update_stats(msg);
 }
 
 const Context = struct {
     random: std.Random,
     stats: c.stats,
-    fn update_stats(self: *@This(), msg: root.OsOutput) void {
+    fn update_stats(self: *@This(), msg: lib.OsOutput) void {
         switch (msg) {
             .create => {
                 self.stats.os_files_created += 1;
@@ -103,12 +113,12 @@ const Context = struct {
 };
 
 const Simulator = struct {
-    os: OS,
+    db: lib.DB(OS),
     ctx: Context,
 
     fn init(allocator: mem.Allocator, random: std.Random) !@This() {
         return .{
-            .os = try OS.init(allocator, on_output_msg),
+            .db = try lib.DB(OS).init(allocator),
             .ctx = .{
                 .random = random,
                 .stats = .{ .os_files_created = 0 },
@@ -117,7 +127,7 @@ const Simulator = struct {
     }
 
     fn deinit(self: *@This()) void {
-        self.os.deinit();
+        self.db.deinit();
     }
 
     fn tick(self: *@This()) !void {
@@ -177,14 +187,7 @@ pub fn main() !void {
     var args = std.process.args();
     _ = args.skip();
 
-    const fp = blk: {
-        if (args.next()) |m| {
-            if (mem.eql(u8, m, "bg")) break :blk &bg_simulation;
-            if (mem.eql(u8, m, "live")) break :blk &live_simulation;
-        }
-        @panic("First arg must be 'live' or 'bg'");
-    };
-
+    const mode = args.next() orelse @panic("First arg must be 'live' or 'bg'");
     const seed = if (args.next()) |arg|
         try std.fmt.parseInt(u64, arg, 10)
     else
@@ -196,7 +199,16 @@ pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};
     var sim = try Simulator.init(gpa.allocator(), rng.random());
 
-    try fp(&sim);
+    if (std.mem.eql(u8, mode, "bg")) {
+        try bg_simulation(&sim);
+    } else if (std.mem.eql(u8, mode, "live")) {
+        try live_simulation(&sim);
+    } else {
+        unreachable;
+    }
+
+    sim.deinit();
+    gpa.deinit();
 }
 
 test "sim lifetime" {

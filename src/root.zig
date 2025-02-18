@@ -18,6 +18,66 @@ pub const OsOutput = union(enum) {
     delete: bool,
 };
 
+const Tasks = struct {
+    const Callback = union {
+        stream_created: *const fn () void,
+    };
+
+    callbacks: [256]Callback,
+    high_water_mark: usize = 0,
+    recycled: std.ArrayListUnmanaged(usize),
+    allocator: mem.Allocator,
+
+    fn init(allocator: mem.Allocator) !@This() {
+        return Tasks{
+            .callbacks = try allocator.alloc(Callback, 256),
+            .recycled = std.ArrayListUnmanaged(usize).initCapacity(128),
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.allocator.free(self.callbacks);
+        self.recycled.deinit(self.allocator);
+    }
+
+    fn add(self: *@This(), cb: Callback) usize {
+        if (self.recycled.pop()) |index| {
+            self.callbacks[index] = cb;
+            return index;
+        } else {
+            const index = self.high_water_mark;
+            self.callbacks[index] = cb;
+            self.high_water_mark += 1;
+            return index;
+        }
+    }
+};
+
+pub fn DB(comptime OS: type) type {
+    return struct {
+        tasks: Tasks,
+        os: OS,
+
+        pub fn init(allocator: mem.Allocator) !@This() {
+            return .{
+                .os = OS.init(allocator),
+                .tasks = try Tasks.init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.os.deinit();
+            self.tasks.deinit();
+        }
+
+        pub fn create_stream(self: *@This(), cb: fn () void) void {
+            const index = self.tasks.add(.{}, .{ .stream_created = cb });
+            self.os.send(.{}, .create, index);
+        }
+    };
+}
+
 //// TODO: test if determinstic
 //// Looking at the code I am 95% sure..
 //const AutoHashMap = std.AutoHashMap;

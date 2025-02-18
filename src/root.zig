@@ -23,7 +23,7 @@ const Tasks = struct {
         stream_created: *const fn () void,
     };
 
-    callbacks: [256]Callback,
+    callbacks: []const Callback,
     high_water_mark: usize = 0,
     recycled: std.ArrayListUnmanaged(usize),
     allocator: mem.Allocator,
@@ -31,7 +31,10 @@ const Tasks = struct {
     fn init(allocator: mem.Allocator) !@This() {
         return Tasks{
             .callbacks = try allocator.alloc(Callback, 256),
-            .recycled = std.ArrayListUnmanaged(usize).initCapacity(128),
+            .recycled = try std.ArrayListUnmanaged(usize).initCapacity(
+                allocator,
+                128,
+            ),
             .allocator = allocator,
         };
     }
@@ -61,9 +64,15 @@ pub fn DB(comptime OS: type) type {
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .os = OS.init(allocator),
+                .os = try OS.init(allocator, &on_os_output),
                 .tasks = try Tasks.init(allocator),
             };
+        }
+
+        fn on_os_output(self: *@This(), msg: OsOutput) void {
+            _ = self;
+            _ = msg;
+            @panic("TODO: handle os output messages in DB struct");
         }
 
         pub fn deinit(self: *@This()) void {
@@ -71,7 +80,10 @@ pub fn DB(comptime OS: type) type {
             self.tasks.deinit();
         }
 
-        pub fn create_stream(self: *@This(), cb: fn () void) void {
+        pub fn create_stream(
+            self: *@This(),
+            cb: *const fn (ctx: anytype) void,
+        ) void {
             const index = self.tasks.add(.{}, .{ .stream_created = cb });
             self.os.send(.{}, .create, index);
         }

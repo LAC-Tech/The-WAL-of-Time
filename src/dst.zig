@@ -21,12 +21,12 @@ const c = @cImport({
 const OS = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    receiver: *const fn (ctx: *Context, msg: lib.OsOutput) void,
+    receiver: *const fn (ctx: *lib.DB(@This()), msg: lib.OsOutput) void,
     allocator: std.mem.Allocator,
 
     pub fn init(
         allocator: std.mem.Allocator,
-        receiver: *const fn (ctx: *Context, msg: lib.OsOutput) void,
+        receiver: *const fn (ctx: *lib.DB(@This()), msg: lib.OsOutput) void,
     ) !@This() {
         const events = Events.init(allocator, {});
         //try events.ensureTotalCapacity(256);
@@ -95,8 +95,8 @@ const OS = struct {
     }
 };
 
-fn on_output_msg(ctx: *Context, msg: lib.OsOutput) void {
-    ctx.update_stats(msg);
+fn on_create_stream(ctx: *Context) void {
+    ctx.stats.os_files_created += 1;
 }
 
 const Context = struct {
@@ -132,7 +132,7 @@ const Simulator = struct {
 
     fn tick(self: *@This()) !void {
         if (Config.create_file_chance > self.ctx.random.float(f64)) {
-            try self.os.send(&self.ctx, .create);
+            try self.db.create_stream(&on_create_stream);
         }
 
         try self.os.tick(&self.ctx);
@@ -212,7 +212,8 @@ pub fn main() !void {
 }
 
 test "sim lifetime" {
-    var sim = try Simulator.init(testing.allocator, 0);
+    var rng = rand.DefaultPrng.init(0);
+    var sim = try Simulator.init(testing.allocator, rng.random());
     _ = try sim.tick();
     defer sim.deinit();
 }

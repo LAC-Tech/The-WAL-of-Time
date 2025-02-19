@@ -21,12 +21,12 @@ const c = @cImport({
 const OS = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    receiver: *const fn (ctx: *lib.DB(@This()), msg: lib.OsOutput) void,
+    receiver: *const fn (db: *lib.DB(OS, Context), msg: lib.os.Output) void,
     allocator: std.mem.Allocator,
 
     pub fn init(
         allocator: std.mem.Allocator,
-        receiver: *const fn (ctx: *lib.DB(@This()), msg: lib.OsOutput) void,
+        receiver: *const fn (db: *lib.DB(OS, Context), msg: lib.os.Output) void,
     ) !@This() {
         const events = Events.init(allocator, {});
         //try events.ensureTotalCapacity(256);
@@ -48,8 +48,7 @@ const OS = struct {
 
     const Event = struct {
         priority: u64,
-        file_op: lib.OsInput,
-        user_data: u64,
+        os_input: lib.os.Input,
     };
     const Events = PriorityQueue(Event, void, struct {
         fn compare(_: void, a: Event, b: Event) math.Order {
@@ -58,15 +57,18 @@ const OS = struct {
     }.compare);
 
     /// Nothing ever happens... until we advance the state of the OS.
-    fn tick(self: *@This(), ctx: *Context) !void {
+    fn tick(self: *@This(), db: *lib.DB(OS, Context)) !void {
         const event = self.events.removeOrNull() orelse return;
 
-        switch (event.file_op) {
+        switch (event.os_input.file_op) {
             .create => {
                 const fd = self.fs.items.len;
                 const file = ArrayListUnmanged(u8){};
                 try self.fs.append(self.allocator, file);
-                self.receiver(ctx, .{ .create = @intCast(fd) });
+                self.receiver(db, .{
+                    .task_id = event.os_input.task_id,
+                    .file_op = .{ .create = @intCast(fd) },
+                });
             },
             .read => |_| {
                 @panic("TODO: Read");
@@ -80,10 +82,10 @@ const OS = struct {
         }
     }
 
-    fn send(
+    pub fn send(
         self: *@This(),
         ctx: *Context,
-        msg: lib.OsInput,
+        msg: lib.os.Input,
         user_data: u64,
     ) !void {
         const event = .{
@@ -95,7 +97,8 @@ const OS = struct {
     }
 };
 
-fn on_create_stream(ctx: *Context) void {
+fn on_create_stream(ctx: *Context, fd: posix.fd_t) void {
+    _ = fd;
     ctx.stats.os_files_created += 1;
 }
 
@@ -113,12 +116,12 @@ const Context = struct {
 };
 
 const Simulator = struct {
-    db: lib.DB(OS),
+    db: lib.DB(OS, Context),
     ctx: Context,
 
     fn init(allocator: mem.Allocator, random: std.Random) !@This() {
         return .{
-            .db = try lib.DB(OS).init(allocator),
+            .db = try lib.DB(OS, Context).init(allocator),
             .ctx = .{
                 .random = random,
                 .stats = .{ .os_files_created = 0 },
@@ -132,10 +135,10 @@ const Simulator = struct {
 
     fn tick(self: *@This()) !void {
         if (Config.create_file_chance > self.ctx.random.float(f64)) {
-            try self.db.create_stream(&on_create_stream);
+            self.db.create_stream(&self.ctx, &on_create_stream);
         }
 
-        try self.os.tick(&self.ctx);
+        try self.db.os.tick(&self.db);
     }
 };
 

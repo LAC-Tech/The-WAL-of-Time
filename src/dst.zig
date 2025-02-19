@@ -41,7 +41,7 @@ const OS = struct {
         };
     }
 
-    fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.fs.deinit(self.allocator);
         self.events.deinit();
     }
@@ -86,12 +86,10 @@ const OS = struct {
         self: *@This(),
         ctx: *Context,
         msg: lib.os.Input,
-        user_data: u64,
     ) !void {
         const event = .{
             .priority = ctx.random.int(u64),
-            .user_data = user_data,
-            .file_op = msg,
+            .os_input = msg,
         };
         try self.events.add(event);
     }
@@ -135,7 +133,7 @@ const Simulator = struct {
 
     fn tick(self: *@This()) !void {
         if (Config.create_file_chance > self.ctx.random.float(f64)) {
-            self.db.create_stream(&self.ctx, &on_create_stream);
+            try self.db.create_stream(&self.ctx, &on_create_stream);
         }
 
         try self.db.os.tick(&self.db);

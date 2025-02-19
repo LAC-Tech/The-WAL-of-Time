@@ -69,24 +69,26 @@ fn AsyncRuntime(comptime UserCtx: type) type {
         }
 
         fn deinit(self: *@This()) void {
-            self.allocator.free(self.callbacks);
+            self.tasks.deinit(self.allocator);
             self.recycled.deinit(self.allocator);
         }
 
-        fn push(self: *@This(), t: Task) usize {
-            if (self.recycled.pop()) |index| {
+        fn push(self: *@This(), t: Task) !usize {
+            if (self.recycled.popOrNull()) |index| {
                 self.tasks.items[index] = t;
                 return index;
             } else {
                 const index = self.tasks.items.len;
-                self.tasks.append(t);
+                try self.tasks.append(self.allocator, t);
                 return index;
             }
         }
 
         fn pop(self: *@This(), task_id: task.ID) Task {
-            self.recycled.append(task_id);
-            return self.callbacks[@intCast(task_id)];
+            self.recycled.append(self.allocator, task_id) catch |err| {
+                @panic(@errorName(err));
+            };
+            return self.tasks.items[@intCast(task_id)];
         }
     };
 }
@@ -122,19 +124,19 @@ pub fn DB(comptime OS: type, comptime UserCtx: type) type {
 
         pub fn deinit(self: *@This()) void {
             self.os.deinit();
-            self.tasks.deinit();
+            self.async_runtime.deinit();
         }
 
         pub fn create_stream(
             self: *@This(),
             ctx: *UserCtx,
             cb: *const fn (ctx: *UserCtx, fd: posix.fd_t) void,
-        ) void {
-            const index = self.async_runtime.push(.{
+        ) !void {
+            const index = try self.async_runtime.push(.{
                 .ctx = ctx,
                 .callback = @ptrCast(cb),
             });
-            self.os.send(.create, index);
+            try self.os.send(ctx, .{ .task_id = index, .file_op = .create });
         }
     };
 }

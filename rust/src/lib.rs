@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 mod os {
     use crate::task;
-    enum IoArgs<'a, FD> {
+    pub enum IoArgs<'a, FD> {
         Create,
         Read { fd: FD, buf: Vec<u8>, offset: usize },
         Append { fd: FD, data: &'a [u8] },
@@ -21,13 +21,18 @@ mod os {
     }
 
     pub struct Input<'a, FD> {
-        task_id: task::ID,
-        args: IoArgs<'a, FD>,
+        pub task_id: task::ID,
+        pub args: IoArgs<'a, FD>,
     }
 
     pub struct Output<FD: core::fmt::Debug> {
         pub task_id: task::ID,
         pub ret_val: IoRetVal<FD>,
+    }
+
+    pub trait OS<'msg> {
+        type FD;
+        fn send(&mut self, msg: Input<'msg, Self::FD>);
     }
 }
 
@@ -85,14 +90,16 @@ impl<'ctx, UserCtx, FD> AsyncRuntime<'ctx, UserCtx, FD> {
     }
 }
 
-struct DB<'ctx, UserCtx, FD> {
+struct DB<'ctx, UserCtx, FD, OS> {
     async_runtime: AsyncRuntime<'ctx, UserCtx, FD>,
+    os: OS,
 }
 
-impl<'ctx, UserCtx, FD: core::fmt::Debug> DB<'ctx, UserCtx, FD> {
-    fn new() -> Self {
+impl<'ctx, UserCtx, FD: core::fmt::Debug, OS: os::OS<'ctx>> DB<'ctx, UserCtx, FD, OS> {
+    fn new(os: OS) -> Self {
         Self {
             async_runtime: AsyncRuntime::new(),
+            os,
         }
     }
 
@@ -105,5 +112,17 @@ impl<'ctx, UserCtx, FD: core::fmt::Debug> DB<'ctx, UserCtx, FD> {
             }
             _ => panic!("TODO: handle receiving '{:?}' from OS", ret_val),
         }
+    }
+
+    fn create_stream(&mut self, ctx: &'ctx mut UserCtx, cb: fn(ctx: &mut UserCtx, fd: FD)) {
+        let task_id = self.async_runtime.add(task::Task {
+            ctx,
+            callback: task::Callback { create: cb },
+        });
+
+        self.os.send(os::Input {
+            task_id,
+            args: os::IoArgs::Create,
+        })
     }
 }

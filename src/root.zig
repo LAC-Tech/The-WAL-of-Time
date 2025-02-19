@@ -4,54 +4,49 @@ const mem = std.mem;
 const posix = std.posix;
 const testing = std.testing;
 
-// Data structures for interacting with the OS
-pub const os = struct {
-    pub const Input = struct {
-        task_id: task.ID,
-        // Represent inputs for syscalls
-        file_op: union(enum) {
-            create,
-            read: struct { fd: posix.fd_t, buf: []u8, offset: usize },
-            append: struct { fd: posix.fd_t, data: []const u8 },
-            delete: posix.fd_t,
-        },
-    };
-
-    pub const Output = struct {
-        task_id: task.ID,
-        // Represent outputs for syscalls
-        file_op: union(enum) {
-            create: posix.fd_t,
-            read: usize,
-            append: usize,
-            delete: bool,
-        },
-    };
-};
-
-// "Unit of execution"
-const task = struct {
-    const ID = u64;
-
-    fn Task(comptime UserCtx: type) type {
-        return struct {
-            // Pointer to some mutable context, so the callback can effect
-            // the outside world.
-            // What Baker/Hewitt called "proper environment", AFAICT
-            ctx: *UserCtx,
-            // Executed when the OS Output is available.
-            // First param will always be the context
-            callback: *const anyopaque,
-        };
-    }
-};
-
-// Currently in-flight "units of execution" waiting to be completed
-fn AsyncRuntime(comptime UserCtx: type) type {
-    const Task = task.Task(UserCtx);
+pub fn AsyncRuntime(
+    comptime FD: type, 
+    comptime OSFunctor: fn(fd: FD) type,
+    /// Some state, so that callbacks can effect the outside world.
+    /// What Baker/Hewitt called "proper environment", AFAICT
+    comptime Env: type,
+) type {
     return struct {
+        const TaskID = u64;
+        pub const OsInput = struct {
+            task_id: TaskID,
+            // Represent inputs for syscalls
+            file_op: union(enum) {
+                create,
+                read: struct { fd: FD, buf: []u8, offset: usize },
+                append: struct { fd: FD, data: []const u8 },
+                delete: FD,
+            },
+        };
+
+        pub const OsOutput = struct {
+            task_id: TaskID,
+            // Represent outputs for syscalls
+            file_op: union(enum) {
+                create: posix.fd_t,
+                read: usize,
+                append: usize,
+                delete: bool,
+            },
+        };
+
+        const OS = OSFunctor(FD);
+
+        // We always know what type the function is at this point
+        const Callback = union {
+            create: *const fn(env: *Env, fd: FD) void,
+        };
+
+        // "Unit of execution"
+        const Task = struct {env: *Env, callback: Callback};
+
         tasks: std.ArrayListUnmanaged(Task),
-        recycled: std.ArrayListUnmanaged(task.ID),
+        recycled: std.ArrayListUnmanaged(TaskID),
         allocator: mem.Allocator,
 
         fn init(allocator: mem.Allocator) !@This() {
@@ -60,7 +55,7 @@ fn AsyncRuntime(comptime UserCtx: type) type {
                     allocator,
                     256,
                 ),
-                .recycled = try std.ArrayListUnmanaged(task.ID).initCapacity(
+                .recycled = try std.ArrayListUnmanaged(TaskID).initCapacity(
                     allocator,
                     128,
                 ),
@@ -84,7 +79,7 @@ fn AsyncRuntime(comptime UserCtx: type) type {
             }
         }
 
-        fn pop(self: *@This(), task_id: task.ID) Task {
+        fn pop(self: *@This(), task_id: TaskID) Task {
             self.recycled.append(self.allocator, task_id) catch |err| {
                 @panic(@errorName(err));
             };
@@ -93,15 +88,17 @@ fn AsyncRuntime(comptime UserCtx: type) type {
     };
 }
 
-pub fn DB(comptime OS: type, comptime UserCtx: type) type {
+pub fn DB(
+    comptime FD: type, 
+    comptime OSFunctor: fn(fd: FD) type,
+    comptime Env: type,
+) type {
     return struct {
-        async_runtime: AsyncRuntime(UserCtx),
-        os: OS,
+        async_runtime: AsyncRuntime(FD, OSFunctor, Env),
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .os = try OS.init(allocator, &os_receive),
-                .async_runtime = try AsyncRuntime(UserCtx).init(allocator),
+                .async_runtime = try AsyncRuntime(FD,OSFunctor, Env,).init(allocator),
             };
         }
 

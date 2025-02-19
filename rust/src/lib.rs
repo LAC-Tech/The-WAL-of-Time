@@ -31,7 +31,8 @@ mod os {
     }
 
     pub trait OS<'msg> {
-        type FD;
+        type FD: core::fmt::Debug;
+        fn new(on_receive: impl FnMut(Output<Self::FD>)) -> Self;
         fn send(&mut self, msg: Input<'msg, Self::FD>);
     }
 }
@@ -61,12 +62,7 @@ struct AsyncRuntime<'ctx, UserCtx, FD> {
 }
 
 impl<'ctx, UserCtx, FD> AsyncRuntime<'ctx, UserCtx, FD> {
-    fn new() -> Self {
-        Self {
-            tasks: vec![],
-            recycled: vec![],
-        }
-    }
+    fn new() -> Self { Self { tasks: vec![], recycled: vec![] } }
 
     fn add(&mut self, t: task::Task<'ctx, UserCtx, FD>) -> task::ID {
         match self.recycled.pop() {
@@ -82,11 +78,12 @@ impl<'ctx, UserCtx, FD> AsyncRuntime<'ctx, UserCtx, FD> {
         }
     }
 
-    fn remove(&mut self, task_id: task::ID) -> &mut task::Task<'ctx, UserCtx, FD> {
+    fn remove(
+        &mut self,
+        task_id: task::ID,
+    ) -> &mut task::Task<'ctx, UserCtx, FD> {
         self.recycled.push(task_id);
-        self.tasks
-            .get_mut(task_id as usize)
-            .expect("task id to be valid")
+        self.tasks.get_mut(task_id as usize).expect("task id to be valid")
     }
 }
 
@@ -95,12 +92,23 @@ struct DB<'ctx, UserCtx, FD, OS> {
     os: OS,
 }
 
-impl<'ctx, UserCtx, FD: core::fmt::Debug, OS: os::OS<'ctx>> DB<'ctx, UserCtx, FD, OS> {
-    fn new(os: OS) -> Self {
-        Self {
-            async_runtime: AsyncRuntime::new(),
-            os,
-        }
+impl<'ctx, UserCtx, FD: core::fmt::Debug, OS: os::OS<'ctx, FD = FD>>
+    DB<'ctx, UserCtx, FD, OS>
+{
+    fn new() -> Self {
+        let mut async_runtime = AsyncRuntime::new();
+        let on_receive = |os::Output { task_id, ret_val }| match ret_val {
+            os::IoRetVal::Create(fd) => {
+                let t = async_runtime.remove(task_id);
+                let on_create = unsafe { t.callback.create };
+                on_create(t.ctx, fd);
+            }
+            _ => panic!("TODO: handle receiving '{:?}' from OS", ret_val),
+        };
+
+        let os = OS::new(on_receive);
+
+        Self { async_runtime, os }
     }
 
     fn os_receive(&mut self, os::Output { task_id, ret_val }: os::Output<FD>) {
@@ -114,15 +122,15 @@ impl<'ctx, UserCtx, FD: core::fmt::Debug, OS: os::OS<'ctx>> DB<'ctx, UserCtx, FD
         }
     }
 
-    fn create_stream(&mut self, ctx: &'ctx mut UserCtx, cb: fn(ctx: &mut UserCtx, fd: FD)) {
-        let task_id = self.async_runtime.add(task::Task {
-            ctx,
-            callback: task::Callback { create: cb },
-        });
+    fn create_stream(
+        &mut self,
+        ctx: &'ctx mut UserCtx,
+        cb: fn(ctx: &mut UserCtx, fd: FD),
+    ) {
+        let task_id = self
+            .async_runtime
+            .add(task::Task { ctx, callback: task::Callback { create: cb } });
 
-        self.os.send(os::Input {
-            task_id,
-            args: os::IoArgs::Create,
-        })
+        self.os.send(os::Input { task_id, args: os::IoArgs::Create })
     }
 }

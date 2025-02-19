@@ -118,8 +118,6 @@ pub fn DB(comptime OS: type, comptime UserCtx: type) type {
                 .append => @panic("TODO: handle receiving 'append' from OS"),
                 .delete => @panic("TODO: handle receiving 'delete' from OS"),
             }
-
-            @panic("TODO: handle os output messages in DB struct");
         }
 
         pub fn deinit(self: *@This()) void {

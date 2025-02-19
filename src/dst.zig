@@ -216,6 +216,8 @@ pub fn main() !void {
 test "sim lifetime" {
     var rng = rand.DefaultPrng.init(0);
     var sim = try Simulator.init(testing.allocator, rng.random());
-    _ = try sim.tick();
+    for (0..1000) |_| {
+        try sim.tick();
+    }
     defer sim.deinit();
 }

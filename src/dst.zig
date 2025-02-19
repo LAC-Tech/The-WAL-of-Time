@@ -153,6 +153,7 @@ const Config = struct {
 fn live_simulation(sim: *Simulator) !void {
     var tui = mem.zeroes(c.tui);
     c.tui_init(&tui);
+    defer c.tui_deinit(&tui);
 
     var time: u64 = 0;
     while (time <= Config.max_sim_time_in_ms) : (time += 10) {
@@ -161,8 +162,6 @@ fn live_simulation(sim: *Simulator) !void {
             c.tui_sim_render(&tui, &sim.ctx.stats, time);
         }
     }
-
-    c.tui_deinit(&tui);
 }
 
 fn bg_simulation(sim: *Simulator) !void {
@@ -209,7 +208,9 @@ pub fn main() !void {
     }
 
     sim.deinit();
-    gpa.deinit();
+    if (gpa.deinit() == .leak) {
+        std.debug.print("memory leak!!!!", .{});
+    }
 }
 
 test "sim lifetime" {

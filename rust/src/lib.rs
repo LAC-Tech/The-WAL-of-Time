@@ -3,12 +3,14 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-mod os {
+pub mod os {
     use crate::task;
-    pub enum IoArgs<'a, FD> {
+
+    #[derive(Ord, PartialOrd, Eq, PartialEq)]
+    pub enum IoArgs<FD> {
         Create,
         Read { fd: FD, buf: Vec<u8>, offset: usize },
-        Append { fd: FD, data: &'a [u8] },
+        Append { fd: FD, data: Box<u8> },
         Delete(FD),
     }
 
@@ -20,9 +22,10 @@ mod os {
         Delete(bool),
     }
 
-    pub struct Input<'a, FD> {
+    #[derive(Ord, PartialOrd, Eq, PartialEq)]
+    pub struct Input<FD> {
         pub task_id: task::ID,
-        pub args: IoArgs<'a, FD>,
+        pub args: IoArgs<FD>,
     }
 
     pub struct Output<FD: core::fmt::Debug> {
@@ -30,41 +33,41 @@ mod os {
         pub ret_val: IoRetVal<FD>,
     }
 
-    pub trait OS<'msg> {
+    pub trait OperatingSystem<Receiver: FnMut(Output<Self::FD>)> {
         type FD: core::fmt::Debug;
-        fn new(on_receive: impl FnMut(Output<Self::FD>)) -> Self;
-        fn send(&mut self, msg: Input<'msg, Self::FD>);
+        type Env;
+        fn new(on_receive: Receiver) -> Self;
+        fn send(&mut self, env: &mut Self::Env, msg: Input<Self::FD>);
     }
 }
 
 mod task {
+    use crate::os;
     pub type ID = u64;
 
     // We always know what type the function is at this point
-    pub union Callback<Env, FD> {
-        pub create: fn(env: &mut Env, fd: FD),
-    }
-
-    pub struct Task<'env, Env, FD> {
-        /// Pointer to some mutable context, so the callback can effect
-        /// the outside world.
-        /// What Baker/Hewitt called "proper environment", AFAICT
-        pub env: &'env mut Env,
-        /// Executed when the OS Output is available.
-        /// First param will always be the context
-        pub callback: Callback<Env, FD>,
+    pub union Task<OS: os::OperatingSystem<_>> {
+        pub create: fn(env: &mut OS::Env, fd: OS::FD),
     }
 }
 
-struct AsyncRuntime<'env, Env, FD> {
-    tasks: Vec<task::Task<'env, Env, FD>>,
+struct AsyncRuntime<OS: os::OperatingSystem<R>, R> {
+    tasks: Vec<task::Task<OS>>,
     recycled: Vec<task::ID>,
+    /// Pointer to some mutable state, so the callback can effect
+    /// the outside world.
+    /// What Baker/Hewitt called "proper environment", AFAICT
+    pub env: OS::Env,
 }
 
-impl<'env, Env, FD> AsyncRuntime<'env, Env, FD> {
-    fn new() -> Self { Self { tasks: vec![], recycled: vec![] } }
+impl<R: FnMut(os::Output<OS::FD>), OS: os::OperatingSystem<R>>
+    AsyncRuntime<OS, R>
+{
+    fn new(env: OS::Env) -> Self {
+        Self { tasks: vec![], recycled: vec![], env }
+    }
 
-    fn add(&mut self, t: task::Task<'env, Env, FD>) -> task::ID {
+    fn add(&mut self, t: task::Task<OS>) -> task::ID {
         match self.recycled.pop() {
             Some(task_id) => {
                 self.tasks[task_id as usize] = t;
@@ -78,27 +81,25 @@ impl<'env, Env, FD> AsyncRuntime<'env, Env, FD> {
         }
     }
 
-    fn remove(&mut self, task_id: task::ID) -> &mut task::Task<'env, Env, FD> {
+    fn remove(&mut self, task_id: task::ID) -> &mut task::Task<OS> {
         self.recycled.push(task_id);
         self.tasks.get_mut(task_id as usize).expect("task id to be valid")
     }
 }
 
-struct DB<'env, Env, FD, OS> {
-    async_runtime: AsyncRuntime<'env, Env, FD>,
+struct DB<OS: os::OperatingSystem> {
+    async_runtime: AsyncRuntime<OS, R>,
     os: OS,
 }
 
-impl<'env, Env, FD: core::fmt::Debug, OS: os::OS<'env, FD = FD>>
-    DB<'env, Env, FD, OS>
-{
-    fn new() -> Self {
-        let mut async_runtime = AsyncRuntime::new();
+impl<OS: os::OperatingSystem> DB<OS> {
+    fn new(env: OS::Env) -> Self {
+        let mut async_runtime = AsyncRuntime::new(env);
         let on_receive = |os::Output { task_id, ret_val }| match ret_val {
             os::IoRetVal::Create(fd) => {
                 let t = async_runtime.remove(task_id);
-                let on_create = unsafe { t.callback.create };
-                on_create(t.env, fd);
+                let on_create = unsafe { t.create };
+                on_create(&mut async_runtime.env, fd);
             }
             _ => panic!("TODO: handle receiving '{:?}' from OS", ret_val),
         };
@@ -108,26 +109,12 @@ impl<'env, Env, FD: core::fmt::Debug, OS: os::OS<'env, FD = FD>>
         Self { async_runtime, os }
     }
 
-    fn os_receive(&mut self, os::Output { task_id, ret_val }: os::Output<FD>) {
-        match ret_val {
-            os::IoRetVal::Create(fd) => {
-                let t = self.async_runtime.remove(task_id);
-                let on_create = unsafe { t.callback.create };
-                on_create(t.env, fd);
-            }
-            _ => panic!("TODO: handle receiving '{:?}' from OS", ret_val),
-        }
-    }
+    fn create_stream(&mut self, cb: fn(env: &mut OS::Env, fd: OS::FD)) {
+        let task_id = self.async_runtime.add(task::Task { create: cb });
 
-    fn create_stream(
-        &mut self,
-        env: &'env mut Env,
-        cb: fn(env: &mut Env, fd: FD),
-    ) {
-        let task_id = self
-            .async_runtime
-            .add(task::Task { env, callback: task::Callback { create: cb } });
-
-        self.os.send(os::Input { task_id, args: os::IoArgs::Create })
+        self.os.send(
+            &mut self.async_runtime.env,
+            os::Input { task_id, args: os::IoArgs::Create },
+        )
     }
 }

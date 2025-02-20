@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use rand::prelude::*;
 type FD = usize;
 
-struct OS<Reciever: FnMut(os::Output<FD>)> {
+struct OS<Receiver: FnMut(os::Output<FD>)> {
     // TODO: extremely nested heap memory, this should be a single &[u8]
     fs: Vec<Vec<u8>>,
     events: BinaryHeap<Event>,
@@ -30,10 +30,11 @@ impl<Receiver: FnMut(os::Output<FD>)> OS<Receiver> {
     }
 }
 
-impl<R: FnMut(os::Output<FD>)> os::OperatingSystem for OS<R> {
+impl os::OperatingSystem for OS {
     type FD = FD;
     type Env = Env;
-    fn new(on_receive: R) -> Self {
+
+    fn new(on_receive: impl FnMut(os::Output<FD>)) -> Self {
         Self { fs: vec![], events: BinaryHeap::new(), receiver: on_receive }
     }
 

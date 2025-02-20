@@ -33,10 +33,10 @@ pub mod os {
         pub ret_val: IoRetVal<FD>,
     }
 
-    pub trait OperatingSystem<Receiver: FnMut(Output<Self::FD>)> {
+    pub trait OperatingSystem {
         type FD: core::fmt::Debug;
         type Env;
-        fn new(on_receive: Receiver) -> Self;
+        fn new(on_receive: impl FnMut(Output<Self::FD>)) -> Self;
         fn send(&mut self, env: &mut Self::Env, msg: Input<Self::FD>);
     }
 }
@@ -46,12 +46,12 @@ mod task {
     pub type ID = u64;
 
     // We always know what type the function is at this point
-    pub union Task<OS: os::OperatingSystem<_>> {
+    pub union Task<OS: os::OperatingSystem> {
         pub create: fn(env: &mut OS::Env, fd: OS::FD),
     }
 }
 
-struct AsyncRuntime<OS: os::OperatingSystem<R>, R> {
+struct AsyncRuntime<OS: os::OperatingSystem> {
     tasks: Vec<task::Task<OS>>,
     recycled: Vec<task::ID>,
     /// Pointer to some mutable state, so the callback can effect
@@ -60,9 +60,7 @@ struct AsyncRuntime<OS: os::OperatingSystem<R>, R> {
     pub env: OS::Env,
 }
 
-impl<R: FnMut(os::Output<OS::FD>), OS: os::OperatingSystem<R>>
-    AsyncRuntime<OS, R>
-{
+impl<OS: os::OperatingSystem> AsyncRuntime<OS> {
     fn new(env: OS::Env) -> Self {
         Self { tasks: vec![], recycled: vec![], env }
     }
@@ -88,7 +86,7 @@ impl<R: FnMut(os::Output<OS::FD>), OS: os::OperatingSystem<R>>
 }
 
 struct DB<OS: os::OperatingSystem> {
-    async_runtime: AsyncRuntime<OS, R>,
+    async_runtime: AsyncRuntime<OS>,
     os: OS,
 }
 

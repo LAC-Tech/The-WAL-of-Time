@@ -36,7 +36,7 @@ pub mod os {
     pub trait OperatingSystem {
         type FD: core::fmt::Debug;
         type Env;
-        fn new(on_receive: impl FnMut(Output<Self::FD>)) -> Self;
+        fn new(receiver: Box<dyn FnMut(Output<Self::FD>)>) -> Self;
         fn send(&mut self, env: &mut Self::Env, msg: Input<Self::FD>);
     }
 }
@@ -90,7 +90,7 @@ struct DB<OS: os::OperatingSystem> {
     os: OS,
 }
 
-impl<OS: os::OperatingSystem> DB<OS> {
+impl<'a, OS: os::OperatingSystem + 'a> DB<OS<'a>> {
     fn new(env: OS::Env) -> Self {
         let mut async_runtime = AsyncRuntime::new(env);
         let on_receive = |os::Output { task_id, ret_val }| match ret_val {

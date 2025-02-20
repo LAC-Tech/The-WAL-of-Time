@@ -4,14 +4,15 @@ use std::collections::BinaryHeap;
 use rand::prelude::*;
 type FD = usize;
 
-struct OS<Receiver: FnMut(os::Output<FD>)> {
+struct OS {
     // TODO: extremely nested heap memory, this should be a single &[u8]
     fs: Vec<Vec<u8>>,
     events: BinaryHeap<Event>,
-    receiver: Reciever,
+    // TODO: inefficient, involves a vtable
+    receiver: Box<dyn FnMut(os::Output<FD>)>,
 }
 
-impl<Receiver: FnMut(os::Output<FD>)> OS<Receiver> {
+impl OS {
     fn tick(&mut self) {
         match self.events.pop() {
             None => {}
@@ -34,8 +35,8 @@ impl os::OperatingSystem for OS {
     type FD = FD;
     type Env = Env;
 
-    fn new(on_receive: impl FnMut(os::Output<FD>)) -> Self {
-        Self { fs: vec![], events: BinaryHeap::new(), receiver: on_receive }
+    fn new(receiver: Box<dyn FnMut(os::Output<FD>)>) -> Self {
+        Self { fs: vec![], events: BinaryHeap::new(), receiver }
     }
 
     fn send(&mut self, env: &mut Env, os_input: os::Input<Self::FD>) {

@@ -1,0 +1,11 @@
+max_width = 80
+use_field_init_shorthand = true
+
+# nightly features, as of writing
+fn_single_line = true
+struct_lit_single_line = true
+struct_lit_width = 80
+struct_variant_width = 80
+trailing_semicolon = false
+wrap_comments = true
+use_small_heuristics = "max"

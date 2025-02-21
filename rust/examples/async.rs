@@ -1,11 +1,11 @@
 use rand::random;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use rust::OperatingSystem;
 
@@ -41,7 +41,10 @@ struct DeleteFuture<'a> {
 impl<'a> Future for CreateFuture<'a> {
     type Output = usize;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         if self.delay_steps > 0 {
             self.delay_steps -= 1;
             cx.waker().wake_by_ref();
@@ -56,7 +59,10 @@ impl<'a> Future for CreateFuture<'a> {
 impl<'a> Future for ReadFuture<'a> {
     type Output = usize;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         if self.delay_steps > 0 {
             self.delay_steps -= 1;
             cx.waker().wake_by_ref();
@@ -79,7 +85,10 @@ impl<'a> Future for ReadFuture<'a> {
 impl<'a> Future for AppendFuture<'a> {
     type Output = usize;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         if self.delay_steps > 0 {
             self.delay_steps -= 1;
             cx.waker().wake_by_ref();
@@ -88,7 +97,9 @@ impl<'a> Future for AppendFuture<'a> {
             let fd = self.fd;
             if let Some(data) = self.data.take() {
                 if fd < self.fs.files.len() {
-                    if let Some(file) = self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
+                    if let Some(file) =
+                        self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut())
+                    {
                         file.extend_from_slice(&data);
                         return Poll::Ready(data.len());
                     }
@@ -102,19 +113,23 @@ impl<'a> Future for AppendFuture<'a> {
 impl<'a> Future for DeleteFuture<'a> {
     type Output = bool;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
         if self.delay_steps > 0 {
             self.delay_steps -= 1;
             cx.waker().wake_by_ref();
             Poll::Pending
         } else {
             let fd = self.fd;
-            let success = if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
-                self.fs.files[fd] = None;
-                true
-            } else {
-                false
-            };
+            let success =
+                if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
+                    self.fs.files[fd] = None;
+                    true
+                } else {
+                    false
+                };
             Poll::Ready(success)
         }
     }
@@ -125,12 +140,25 @@ impl OperatingSystem<usize> for VecFS {
         CreateFuture { fs: self, delay_steps: random::<u32>() % 5 }
     }
 
-    fn read<'a>(&'a mut self, buf: &'a mut Vec<u8>, offset: usize) -> impl Future<Output = usize> + 'a {
+    fn read<'a>(
+        &'a mut self,
+        buf: &'a mut Vec<u8>,
+        offset: usize,
+    ) -> impl Future<Output = usize> + 'a {
         ReadFuture { fs: self, buf, offset, delay_steps: random::<u32>() % 5 }
     }
 
-    fn append(&mut self, fd: usize, data: Box<[u8]>) -> impl Future<Output = usize> + '_ {
-        AppendFuture { fs: self, fd, data: Some(data), delay_steps: random::<u32>() % 5 }
+    fn append(
+        &mut self,
+        fd: usize,
+        data: Box<[u8]>,
+    ) -> impl Future<Output = usize> + '_ {
+        AppendFuture {
+            fs: self,
+            fd,
+            data: Some(data),
+            delay_steps: random::<u32>() % 5,
+        }
     }
 
     fn delete(&mut self, fd: usize) -> impl Future<Output = bool> + '_ {
@@ -167,9 +195,7 @@ struct MiniRuntime {
 }
 
 impl MiniRuntime {
-    fn new() -> Self {
-        MiniRuntime { tasks: BinaryHeap::new(), waker: None }
-    }
+    fn new() -> Self { MiniRuntime { tasks: BinaryHeap::new(), waker: None } }
 
     fn create_waker(&mut self) -> Waker {
         fn clone(data: *const ()) -> RawWaker { RawWaker::new(data, &VTABLE) }
@@ -177,11 +203,15 @@ impl MiniRuntime {
         fn wake_by_ref(_data: *const ()) {}
         fn drop(_data: *const ()) {}
 
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+        static VTABLE: RawWakerVTable =
+            RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
         if self.waker.is_none() {
             self.waker = Some(unsafe {
-                Waker::from_raw(RawWaker::new(std::ptr::null::<()>() as *const _, &VTABLE))
+                Waker::from_raw(RawWaker::new(
+                    std::ptr::null::<()>() as *const _,
+                    &VTABLE,
+                ))
             });
         }
         self.waker.clone().unwrap()
@@ -199,7 +229,7 @@ impl MiniRuntime {
                 let waker = self.create_waker();
                 let mut context = Context::from_waker(&waker);
                 match task.future.as_mut().poll(&mut context) {
-                    Poll::Pending => self.tasks.push(task), // Requeue immediately
+                    Poll::Pending => self.tasks.push(task), /* Requeue immediately */
                     Poll::Ready(()) => {}
                 }
             }

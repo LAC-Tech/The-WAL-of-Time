@@ -1,13 +1,9 @@
 use rand::random;
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-//use futures::FutureExt;
 
 use rust::OperatingSystem;
 
@@ -47,24 +43,6 @@ mod future {
         pub fd: usize,
     }
 
-    impl<'a> Future for Create<'a> {
-        type Output = usize;
-
-        fn poll(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Self::Output> {
-            if self.delay_steps > 0 {
-                self.delay_steps -= 1;
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            } else {
-                self.fs.files.push(Some(Vec::new()));
-                Poll::Ready(self.fs.files.len() - 1)
-            }
-        }
-    }
-
     fn waiting(delay_steps: &mut u32, cx: &mut Context<'_>) -> bool {
         if *delay_steps > 0 {
             *delay_steps -= 1;
@@ -75,6 +53,22 @@ mod future {
         }
     }
 
+    impl<'a> Future for Create<'a> {
+        type Output = usize;
+
+        fn poll(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Self::Output> {
+            if waiting(&mut self.delay_steps, cx) {
+                return Poll::Pending
+            }
+
+            self.fs.files.push(Some(Vec::new()));
+            Poll::Ready(self.fs.files.len() - 1)
+        }
+    }
+
     impl<'a> Future for Read<'a> {
         type Output = usize;
 
@@ -82,8 +76,10 @@ mod future {
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
-            
+            if waiting(&mut self.delay_steps, cx) {
+                return Poll::Pending
+            }
+
             let file_data = self
                 .fs
                 .files
@@ -104,7 +100,9 @@ mod future {
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
+            if waiting(&mut self.delay_steps, cx) {
+                return Poll::Pending
+            }
 
             let fd = self.fd;
             let data = match self.data.take() {
@@ -134,7 +132,9 @@ mod future {
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
-            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
+            if waiting(&mut self.delay_steps, cx) {
+                return Poll::Pending
+            }
 
             let fd = self.fd;
             let success =
@@ -211,7 +211,7 @@ struct Runtime {
 }
 
 impl Runtime {
-    fn new() -> Self { Self { tasks: BinaryHeap::new(), waker: None } }
+    fn new() -> Self { Runtime { tasks: BinaryHeap::new(), waker: None } }
 
     fn create_waker(&mut self) -> Waker {
         fn clone(data: *const ()) -> RawWaker { RawWaker::new(data, &VTABLE) }
@@ -253,48 +253,24 @@ impl Runtime {
     }
 }
 
-async fn run_fs(fs: Rc<RefCell<VecFS>>) {
-    let fd = fs.borrow_mut().create().await;
+async fn run_fs(mut fs: VecFS) {
+    let fd = fs.create().await;
     println!("Created file with FD: {}", fd);
 
     let data = vec![42, 43, 44].into_boxed_slice();
-    let bytes_written = fs.borrow_mut().append(fd, data).await;
+    let bytes_written = fs.append(fd, data).await;
     println!("Appended {} bytes", bytes_written);
 
     let mut buf = Vec::new();
-    let bytes_read = fs.borrow_mut().read(&mut buf, fd).await;
+    let bytes_read = fs.read(&mut buf, fd).await;
     println!("Read {} bytes: {:?}", bytes_read, buf);
 
-    let success = fs.borrow_mut().delete(fd).await;
+    let success = fs.delete(fd).await;
     println!("Deleted FD {}: {}", fd, success);
 }
 
 fn main() {
     let mut runtime = Runtime::new();
-    let fs = Rc::new(RefCell::new(VecFS::default()));
-
-    runtime.spawn({
-        let fs = fs.clone();
-        async move {
-            let fd = fs.borrow_mut().create().await;
-            println!("First FD={}", fd);
-        }
-    });
-    runtime.spawn({
-        let fs = fs.clone();
-        async move {
-            let fd = fs.borrow_mut().create().await;
-            println!("Second FD={}", fd);
-        }
-    });
-    runtime.spawn({
-        let fs = fs.clone();
-        async move {
-            let fd = fs.borrow_mut().create().await;
-            println!("Third FD={}", fd);
-        }
-    });
-    runtime.spawn(run_fs(fs));
-
+    runtime.spawn(run_fs(VecFS::default()));
     runtime.run();
 }

@@ -1,5 +1,8 @@
-#[no_std]
+#![no_std]
 extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 pub trait OperatingSystem<FD> {
     fn create(&mut self) -> impl Future<Output = FD> + '_;

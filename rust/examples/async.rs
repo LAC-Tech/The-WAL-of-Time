@@ -8,7 +8,7 @@ use rand::random;
 trait OS<FD> {
     fn create(&mut self) -> impl Future<Output = FD> + '_;
     fn read<'a>(&'a mut self, buf: &'a mut Vec<u8>, offset: usize) -> impl Future<Output = usize> + 'a;
-    fn append(&mut self, fd: FD, data: Box<u8>) -> impl Future<Output = usize> + '_;
+    fn append(&mut self, fd: FD, data: Box<[u8]>) -> impl Future<Output = usize> + '_;
     fn delete(&mut self, fd: FD) -> impl Future<Output = bool> + '_;
 }
 
@@ -29,7 +29,7 @@ struct ReadFuture<'a> {
 struct AppendFuture<'a> {
     fs: &'a mut VecFS,
     fd: usize,
-    data: Option<Box<u8>>,
+    data: Option<Box<[u8]>>, // Updated to Box<[u8]>
 }
 
 struct DeleteFuture<'a> {
@@ -42,7 +42,7 @@ impl<'a> Future for CreateFuture<'a> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.fs.files.push(Some(Vec::new()));
-        cx.waker().wake_by_ref(); // Still wake, but runtime will handle it safely
+        cx.waker().wake_by_ref();
         Poll::Ready(self.fs.files.len() - 1)
     }
 }
@@ -67,12 +67,14 @@ impl<'a> Future for AppendFuture<'a> {
         if let Some(data) = self.data.take() {
             if fd < self.fs.files.len() {
                 if let Some(file) = self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
-                    file.push(*data);
+                    file.extend_from_slice(&data);
+                    cx.waker().wake_by_ref();
+                    return Poll::Ready(data.len());
                 }
             }
         }
         cx.waker().wake_by_ref();
-        Poll::Ready(1)
+        Poll::Ready(0) // Return 0 if append failed (e.g., invalid FD)
     }
 }
 
@@ -101,7 +103,7 @@ impl OS<usize> for VecFS {
         ReadFuture { fs: self, buf, offset }
     }
 
-    fn append(&mut self, fd: usize, data: Box<u8>) -> impl Future<Output = usize> + '_ {
+    fn append(&mut self, fd: usize, data: Box<[u8]>) -> impl Future<Output = usize> + '_ {
         AppendFuture { fs: self, fd, data: Some(data) }
     }
 
@@ -150,7 +152,7 @@ impl MiniRuntime {
         fn clone(data: *const ()) -> RawWaker {
             RawWaker::new(data, &VTABLE)
         }
-        fn wake(_data: *const ()) {} // No-op waker
+        fn wake(_data: *const ()) {}
         fn wake_by_ref(_data: *const ()) {}
         fn drop(_data: *const ()) {}
 
@@ -172,7 +174,6 @@ impl MiniRuntime {
     fn run(&mut self) {
         let mut pending = BinaryHeap::new();
         while !self.tasks.is_empty() {
-            // Process all tasks in the current queue
             while let Some(mut task) = self.tasks.pop() {
                 let waker = self.create_waker();
                 let mut context = Context::from_waker(&waker);
@@ -181,7 +182,6 @@ impl MiniRuntime {
                     Poll::Ready(()) => {}
                 }
             }
-            // Swap pending back to tasks for next iteration
             std::mem::swap(&mut self.tasks, &mut pending);
         }
     }
@@ -191,7 +191,8 @@ async fn run_fs(mut fs: VecFS) {
     let fd = fs.create().await;
     println!("Created file with FD: {}", fd);
 
-    let bytes_written = fs.append(fd, Box::new(42)).await;
+    let data = vec![42, 43, 44].into_boxed_slice(); // Example with multiple bytes
+    let bytes_written = fs.append(fd, data).await;
     println!("Appended {} bytes", bytes_written);
 
     let mut buf = Vec::new();

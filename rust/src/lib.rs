@@ -3,6 +3,29 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub struct Node<Env, OS>
+where
+    OS: os::OperatingSystem,
+{
+    os: OS,
+    rt: AsyncRuntime<OS::FD, Env>,
+}
+
+impl<Env, OS> Node<Env, OS>
+where
+    OS: os::OperatingSystem,
+{
+    fn new(env: Env) -> Self {
+        Self { os: OS::default(), rt: AsyncRuntime::new(env) }
+    }
+
+    fn create_stream(&mut self, cb: fn(env: &mut Env, fd: OS::FD)) {
+        let task_id = self.rt.add(task::Task { on_create: cb });
+        self.os.send(os::Input { task_id, args: os::IoArgs::Create });
+        /* how can I get the output from the OS, and call the callback? */
+    }
+}
+
 pub mod os {
     use crate::task;
 
@@ -33,11 +56,9 @@ pub mod os {
         pub ret_val: IoRetVal<FD>,
     }
 
-    pub trait OperatingSystem {
+    pub trait OperatingSystem: Default {
         type FD: core::fmt::Debug;
-        type Env;
-        fn new(receiver: Box<dyn FnMut(Output<Self::FD>)>) -> Self;
-        fn send(&mut self, env: &mut Self::Env, msg: Input<Self::FD>);
+        fn send(&mut self, msg: Input<Self::FD>);
     }
 }
 
@@ -46,26 +67,24 @@ mod task {
     pub type ID = u64;
 
     // We always know what type the function is at this point
-    pub union Task<OS: os::OperatingSystem> {
-        pub create: fn(env: &mut OS::Env, fd: OS::FD),
+    pub union Task<FD, Env> {
+        pub on_create: fn(env: &mut Env, fd: FD),
     }
 }
 
-struct AsyncRuntime<OS: os::OperatingSystem> {
-    tasks: Vec<task::Task<OS>>,
+struct AsyncRuntime<FD, Env> {
+    tasks: Vec<task::Task<FD, Env>>,
     recycled: Vec<task::ID>,
     /// Pointer to some mutable state, so the callback can effect
     /// the outside world.
     /// What Baker/Hewitt called "proper environment", AFAICT
-    pub env: OS::Env,
+    pub env: Env,
 }
 
-impl<OS: os::OperatingSystem> AsyncRuntime<OS> {
-    fn new(env: OS::Env) -> Self {
-        Self { tasks: vec![], recycled: vec![], env }
-    }
+impl<FD, Env> AsyncRuntime<FD, Env> {
+    fn new(env: Env) -> Self { Self { tasks: vec![], recycled: vec![], env } }
 
-    fn add(&mut self, t: task::Task<OS>) -> task::ID {
+    fn add(&mut self, t: task::Task<FD, Env>) -> task::ID {
         match self.recycled.pop() {
             Some(task_id) => {
                 self.tasks[task_id as usize] = t;
@@ -79,40 +98,34 @@ impl<OS: os::OperatingSystem> AsyncRuntime<OS> {
         }
     }
 
-    fn remove(&mut self, task_id: task::ID) -> &mut task::Task<OS> {
+    fn remove(&mut self, task_id: task::ID) -> &mut task::Task<FD, Env> {
         self.recycled.push(task_id);
         self.tasks.get_mut(task_id as usize).expect("task id to be valid")
     }
 }
 
-struct DB<OS: os::OperatingSystem> {
-    async_runtime: AsyncRuntime<OS>,
-    os: OS,
+struct DB<FD, Env> {
+    async_runtime: AsyncRuntime<FD, Env>,
 }
 
-impl<'a, OS: os::OperatingSystem + 'a> DB<OS<'a>> {
-    fn new(env: OS::Env) -> Self {
-        let mut async_runtime = AsyncRuntime::new(env);
-        let on_receive = |os::Output { task_id, ret_val }| match ret_val {
+impl<FD, Env> DB<FD, Env>
+where
+    FD: core::fmt::Debug,
+{
+    fn new(env: Env) -> Self { Self { async_runtime: AsyncRuntime::new(env) } }
+
+    fn send(&mut self, os::Output { task_id, ret_val }: os::Output<FD>) {
+        match ret_val {
             os::IoRetVal::Create(fd) => {
-                let t = async_runtime.remove(task_id);
-                let on_create = unsafe { t.create };
-                on_create(&mut async_runtime.env, fd);
+                let t = self.async_runtime.remove(task_id);
+                let on_create = unsafe { t.on_create };
+                on_create(&mut self.async_runtime.env, fd);
             }
             _ => panic!("TODO: handle receiving '{:?}' from OS", ret_val),
-        };
-
-        let os = OS::new(on_receive);
-
-        Self { async_runtime, os }
+        }
     }
 
-    fn create_stream(&mut self, cb: fn(env: &mut OS::Env, fd: OS::FD)) {
-        let task_id = self.async_runtime.add(task::Task { create: cb });
-
-        self.os.send(
-            &mut self.async_runtime.env,
-            os::Input { task_id, args: os::IoArgs::Create },
-        )
+    fn create_stream(&mut self, cb: fn(env: &mut Env, fd: FD)) -> task::ID {
+        self.async_runtime.add(task::Task { on_create: cb })
     }
 }

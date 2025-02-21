@@ -18,41 +18,32 @@ struct VecFS {
 
 struct CreateFuture<'a> {
     fs: &'a mut VecFS,
-    done: bool,
 }
 
 struct ReadFuture<'a> {
     fs: &'a mut VecFS,
     buf: &'a mut Vec<u8>,
     offset: usize,
-    done: bool,
 }
 
 struct AppendFuture<'a> {
     fs: &'a mut VecFS,
     fd: usize,
     data: Option<Box<u8>>,
-    done: bool,
 }
 
 struct DeleteFuture<'a> {
     fs: &'a mut VecFS,
     fd: usize,
-    done: bool,
 }
 
 impl<'a> Future for CreateFuture<'a> {
     type Output = usize;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.done {
-            Poll::Ready(self.fs.files.len() - 1)
-        } else {
-            self.fs.files.push(Some(Vec::new()));
-            self.done = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
+        self.fs.files.push(Some(Vec::new()));
+        cx.waker().wake_by_ref(); // Still wake, but runtime will handle it safely
+        Poll::Ready(self.fs.files.len() - 1)
     }
 }
 
@@ -60,16 +51,11 @@ impl<'a> Future for ReadFuture<'a> {
     type Output = usize;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.done {
-            Poll::Ready(self.buf.len())
-        } else {
-            let file_data = self.fs.files.get(self.offset).and_then(|opt| opt.as_ref()).cloned().unwrap_or_default();
-            self.buf.clear();
-            self.buf.extend_from_slice(&file_data);
-            self.done = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
+        let file_data = self.fs.files.get(self.offset).and_then(|opt| opt.as_ref()).cloned().unwrap_or_default();
+        self.buf.clear();
+        self.buf.extend_from_slice(&file_data);
+        cx.waker().wake_by_ref();
+        Poll::Ready(self.buf.len())
     }
 }
 
@@ -77,55 +63,50 @@ impl<'a> Future for AppendFuture<'a> {
     type Output = usize;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.done {
-            Poll::Ready(1)
-        } else {
-            let fd = self.fd;
-            let data = self.data.take();
+        let fd = self.fd;
+        if let Some(data) = self.data.take() {
             if fd < self.fs.files.len() {
-                if let Some(Some(file)) = self.fs.files.get_mut(fd) {
-                    if let Some(d) = data {
-                        file.push(*d);
-                    }
+                if let Some(file) = self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
+                    file.push(*data);
                 }
             }
-            self.done = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
         }
+        cx.waker().wake_by_ref();
+        Poll::Ready(1)
     }
 }
 
 impl<'a> Future for DeleteFuture<'a> {
     type Output = bool;
 
-    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let fd = self.fd;
         let success = if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
-            self.fs.files[fd] = None; // Mark as deleted
+            self.fs.files[fd] = None;
             true
         } else {
             false
         };
-        Poll::Ready(success) // Complete immediately with the result
+        cx.waker().wake_by_ref();
+        Poll::Ready(success)
     }
 }
 
 impl OS<usize> for VecFS {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
-        CreateFuture { fs: self, done: false }
+        CreateFuture { fs: self }
     }
 
     fn read<'a>(&'a mut self, buf: &'a mut Vec<u8>, offset: usize) -> impl Future<Output = usize> + 'a {
-        ReadFuture { fs: self, buf, offset, done: false }
+        ReadFuture { fs: self, buf, offset }
     }
 
     fn append(&mut self, fd: usize, data: Box<u8>) -> impl Future<Output = usize> + '_ {
-        AppendFuture { fs: self, fd, data: Some(data), done: false }
+        AppendFuture { fs: self, fd, data: Some(data) }
     }
 
     fn delete(&mut self, fd: usize) -> impl Future<Output = bool> + '_ {
-        DeleteFuture { fs: self, fd, done: false }
+        DeleteFuture { fs: self, fd }
     }
 }
 
@@ -156,45 +137,28 @@ impl Ord for Task {
 
 struct MiniRuntime {
     tasks: BinaryHeap<Task>,
-    pending: BinaryHeap<Task>,
-    waker: Option<Waker>,
 }
 
 impl MiniRuntime {
     fn new() -> Self {
         MiniRuntime {
             tasks: BinaryHeap::new(),
-            pending: BinaryHeap::new(),
-            waker: None,
         }
     }
 
-    fn create_waker(&mut self) -> Waker {
+    fn create_waker(&self) -> Waker {
         fn clone(data: *const ()) -> RawWaker {
             RawWaker::new(data, &VTABLE)
         }
-        fn wake(data: *const ()) {
-            let runtime = unsafe { &mut *(data as *mut MiniRuntime) };
-            while let Some(task) = runtime.pending.pop() {
-                runtime.tasks.push(task);
-            }
-        }
-        fn wake_by_ref(data: *const ()) {
-            let runtime = unsafe { &mut *(data as *mut MiniRuntime) };
-            while let Some(task) = runtime.pending.pop() {
-                runtime.tasks.push(task);
-            }
-        }
+        fn wake(_data: *const ()) {} // No-op waker
+        fn wake_by_ref(_data: *const ()) {}
         fn drop(_data: *const ()) {}
 
         static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-        if self.waker.is_none() {
-            self.waker = Some(unsafe {
-                Waker::from_raw(RawWaker::new(self as *mut _ as *const _, &VTABLE))
-            });
+        unsafe {
+            Waker::from_raw(RawWaker::new(std::ptr::null::<()>() as *const _, &VTABLE))
         }
-        self.waker.clone().unwrap()
     }
 
     fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
@@ -206,23 +170,19 @@ impl MiniRuntime {
     }
 
     fn run(&mut self) {
-        while !self.tasks.is_empty() || !self.pending.is_empty() {
+        let mut pending = BinaryHeap::new();
+        while !self.tasks.is_empty() {
+            // Process all tasks in the current queue
             while let Some(mut task) = self.tasks.pop() {
                 let waker = self.create_waker();
                 let mut context = Context::from_waker(&waker);
-
                 match task.future.as_mut().poll(&mut context) {
-                    Poll::Pending => {
-                        self.pending.push(task);
-                    }
+                    Poll::Pending => pending.push(task),
                     Poll::Ready(()) => {}
                 }
             }
-            if self.tasks.is_empty() && !self.pending.is_empty() {
-                while let Some(task) = self.pending.pop() {
-                    self.tasks.push(task);
-                }
-            }
+            // Swap pending back to tasks for next iteration
+            std::mem::swap(&mut self.tasks, &mut pending);
         }
     }
 }

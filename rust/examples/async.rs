@@ -5,7 +5,6 @@ use std::pin::Pin;
 use std::cmp::Ordering;
 use rand::random;
 
-// OS trait (unchanged for now, preserving intent)
 trait OS<FD> {
     fn create(&mut self) -> impl Future<Output = FD> + '_;
     fn read<'a>(&'a mut self, buf: &'a mut Vec<u8>, offset: usize) -> impl Future<Output = usize> + 'a;
@@ -13,12 +12,10 @@ trait OS<FD> {
     fn delete(&mut self, fd: FD) -> impl Future<Output = bool> + '_;
 }
 
-// Simple file system using Vec<Vec<u8>>
 struct VecFS {
-    files: Vec<Vec<u8>>,
+    files: Vec<Option<Vec<u8>>>,
 }
 
-// Futures for each operation
 struct CreateFuture<'a> {
     fs: &'a mut VecFS,
     done: bool,
@@ -51,7 +48,7 @@ impl<'a> Future for CreateFuture<'a> {
         if self.done {
             Poll::Ready(self.fs.files.len() - 1)
         } else {
-            self.fs.files.push(Vec::new());
+            self.fs.files.push(Some(Vec::new()));
             self.done = true;
             cx.waker().wake_by_ref();
             Poll::Pending
@@ -66,7 +63,7 @@ impl<'a> Future for ReadFuture<'a> {
         if self.done {
             Poll::Ready(self.buf.len())
         } else {
-            let file_data = self.fs.files.get(self.offset).cloned().unwrap_or_default();
+            let file_data = self.fs.files.get(self.offset).and_then(|opt| opt.as_ref()).cloned().unwrap_or_default();
             self.buf.clear();
             self.buf.extend_from_slice(&file_data);
             self.done = true;
@@ -83,11 +80,13 @@ impl<'a> Future for AppendFuture<'a> {
         if self.done {
             Poll::Ready(1)
         } else {
-            let fd = self.fd; // Move fd to a local to avoid borrowing self
-            let data = self.data.take(); // Take data separately
+            let fd = self.fd;
+            let data = self.data.take();
             if fd < self.fs.files.len() {
-                if let Some(d) = data {
-                    self.fs.files[fd].push(*d);
+                if let Some(Some(file)) = self.fs.files.get_mut(fd) {
+                    if let Some(d) = data {
+                        file.push(*d);
+                    }
                 }
             }
             self.done = true;
@@ -100,23 +99,18 @@ impl<'a> Future for AppendFuture<'a> {
 impl<'a> Future for DeleteFuture<'a> {
     type Output = bool;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.done {
-            Poll::Ready(self.fd < self.fs.files.len())
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let fd = self.fd;
+        let success = if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
+            self.fs.files[fd] = None; // Mark as deleted
+            true
         } else {
-            let fd = self.fd; // Move fd to a local
-            let valid_fd = fd < self.fs.files.len();
-            if valid_fd {
-                self.fs.files.remove(fd);
-            }
-            self.done = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
+            false
+        };
+        Poll::Ready(success) // Complete immediately with the result
     }
 }
 
-// Implement OS for VecFS
 impl OS<usize> for VecFS {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
         CreateFuture { fs: self, done: false }
@@ -135,7 +129,6 @@ impl OS<usize> for VecFS {
     }
 }
 
-// Runtime structs
 struct Task {
     priority: u32,
     future: Pin<Box<dyn Future<Output = ()> + 'static>>,
@@ -234,7 +227,6 @@ impl MiniRuntime {
     }
 }
 
-// Example usage with owned VecFS
 async fn run_fs(mut fs: VecFS) {
     let fd = fs.create().await;
     println!("Created file with FD: {}", fd);

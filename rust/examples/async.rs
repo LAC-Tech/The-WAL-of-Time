@@ -7,67 +7,83 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+//use futures::FutureExt;
+
 use rust::OperatingSystem;
 
+// An append only file system, support Create, Append, Update, Delete
+#[derive(Default)]
 struct VecFS {
     files: Vec<Option<Vec<u8>>>,
 }
 
-struct CreateFuture<'a> {
-    fs: &'a mut VecFS,
-    delay_steps: u32,
-}
+mod future {
+    use super::VecFS;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
-struct ReadFuture<'a> {
-    fs: &'a mut VecFS,
-    buf: &'a mut Vec<u8>,
-    offset: usize,
-    delay_steps: u32,
-}
+    pub struct Create<'a> {
+        pub delay_steps: u32,
+        pub fs: &'a mut VecFS,
+    }
 
-struct AppendFuture<'a> {
-    fs: &'a mut VecFS,
-    fd: usize,
-    data: Option<Box<[u8]>>,
-    delay_steps: u32,
-}
+    pub struct Read<'a> {
+        pub delay_steps: u32,
+        pub fs: &'a mut VecFS,
+        pub buf: &'a mut Vec<u8>,
+        pub offset: usize,
+    }
 
-struct DeleteFuture<'a> {
-    fs: &'a mut VecFS,
-    fd: usize,
-    delay_steps: u32,
-}
+    pub struct Append<'a> {
+        pub delay_steps: u32,
+        pub fs: &'a mut VecFS,
+        pub fd: usize,
+        pub data: Option<Box<[u8]>>,
+    }
 
-impl<'a> Future for CreateFuture<'a> {
-    type Output = usize;
+    pub struct Delete<'a> {
+        pub delay_steps: u32,
+        pub fs: &'a mut VecFS,
+        pub fd: usize,
+    }
 
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
-        if self.delay_steps > 0 {
-            self.delay_steps -= 1;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        } else {
-            self.fs.files.push(Some(Vec::new()));
-            Poll::Ready(self.fs.files.len() - 1)
+    impl<'a> Future for Create<'a> {
+        type Output = usize;
+
+        fn poll(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Self::Output> {
+            if self.delay_steps > 0 {
+                self.delay_steps -= 1;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            } else {
+                self.fs.files.push(Some(Vec::new()));
+                Poll::Ready(self.fs.files.len() - 1)
+            }
         }
     }
-}
 
-impl<'a> Future for ReadFuture<'a> {
-    type Output = usize;
-
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
-        if self.delay_steps > 0 {
-            self.delay_steps -= 1;
+    fn waiting(delay_steps: &mut u32, cx: &mut Context<'_>) -> bool {
+        if *delay_steps > 0 {
+            *delay_steps -= 1;
             cx.waker().wake_by_ref();
-            Poll::Pending
+            true
         } else {
+            false
+        }
+    }
+
+    impl<'a> Future for Read<'a> {
+        type Output = usize;
+
+        fn poll(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Self::Output> {
+            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
+            
             let file_data = self
                 .fs
                 .files
@@ -80,48 +96,46 @@ impl<'a> Future for ReadFuture<'a> {
             Poll::Ready(self.buf.len())
         }
     }
-}
 
-impl<'a> Future for AppendFuture<'a> {
-    type Output = usize;
+    impl<'a> Future for Append<'a> {
+        type Output = usize;
 
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
-        if self.delay_steps > 0 {
-            self.delay_steps -= 1;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        } else {
+        fn poll(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Self::Output> {
+            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
+
             let fd = self.fd;
-            if let Some(data) = self.data.take() {
-                if fd < self.fs.files.len() {
-                    if let Some(file) =
-                        self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut())
-                    {
-                        file.extend_from_slice(&data);
-                        return Poll::Ready(data.len());
-                    }
-                }
+            let data = match self.data.take() {
+                Some(data) => data,
+                None => return Poll::Ready(0),
+            };
+
+            if fd >= self.fs.files.len() {
+                return Poll::Ready(0);
             }
-            Poll::Ready(0)
+
+            let file =
+                match self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
+                    Some(file) => file,
+                    None => return Poll::Ready(0),
+                };
+
+            file.extend_from_slice(&data);
+            Poll::Ready(data.len())
         }
     }
-}
 
-impl<'a> Future for DeleteFuture<'a> {
-    type Output = bool;
+    impl<'a> Future for Delete<'a> {
+        type Output = bool;
 
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
-        if self.delay_steps > 0 {
-            self.delay_steps -= 1;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        } else {
+        fn poll(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Self::Output> {
+            if waiting(&mut self.delay_steps, cx) { return Poll::Pending }
+
             let fd = self.fd;
             let success =
                 if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
@@ -137,7 +151,7 @@ impl<'a> Future for DeleteFuture<'a> {
 
 impl OperatingSystem<usize> for VecFS {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
-        CreateFuture { fs: self, delay_steps: random::<u32>() % 5 }
+        future::Create { delay_steps: random::<u32>() % 5, fs: self }
     }
 
     fn read<'a>(
@@ -145,7 +159,7 @@ impl OperatingSystem<usize> for VecFS {
         buf: &'a mut Vec<u8>,
         offset: usize,
     ) -> impl Future<Output = usize> + 'a {
-        ReadFuture { fs: self, buf, offset, delay_steps: random::<u32>() % 5 }
+        future::Read { delay_steps: random::<u32>() % 5, fs: self, buf, offset }
     }
 
     fn append(
@@ -153,19 +167,20 @@ impl OperatingSystem<usize> for VecFS {
         fd: usize,
         data: Box<[u8]>,
     ) -> impl Future<Output = usize> + '_ {
-        AppendFuture {
+        future::Append {
+            delay_steps: random::<u32>() % 5,
             fs: self,
             fd,
             data: Some(data),
-            delay_steps: random::<u32>() % 5,
         }
     }
 
     fn delete(&mut self, fd: usize) -> impl Future<Output = bool> + '_ {
-        DeleteFuture { fs: self, fd, delay_steps: random::<u32>() % 5 }
+        future::Delete { delay_steps: random::<u32>() % 5, fs: self, fd }
     }
 }
 
+// Random priority to increase "chaos" in simulation
 struct Task {
     priority: u32,
     future: Pin<Box<dyn Future<Output = ()> + 'static>>,
@@ -189,13 +204,14 @@ impl Ord for Task {
     }
 }
 
-struct MiniRuntime {
+// Single threaded, deterministic async runtime
+struct Runtime {
     tasks: BinaryHeap<Task>,
     waker: Option<Waker>,
 }
 
-impl MiniRuntime {
-    fn new() -> Self { MiniRuntime { tasks: BinaryHeap::new(), waker: None } }
+impl Runtime {
+    fn new() -> Self { Self { tasks: BinaryHeap::new(), waker: None } }
 
     fn create_waker(&mut self) -> Waker {
         fn clone(data: *const ()) -> RawWaker { RawWaker::new(data, &VTABLE) }
@@ -229,7 +245,7 @@ impl MiniRuntime {
                 let waker = self.create_waker();
                 let mut context = Context::from_waker(&waker);
                 match task.future.as_mut().poll(&mut context) {
-                    Poll::Pending => self.tasks.push(task), /* Requeue immediately */
+                    Poll::Pending => self.tasks.push(task),
                     Poll::Ready(()) => {}
                 }
             }
@@ -254,8 +270,8 @@ async fn run_fs(fs: Rc<RefCell<VecFS>>) {
 }
 
 fn main() {
-    let mut runtime = MiniRuntime::new();
-    let fs = Rc::new(RefCell::new(VecFS { files: Vec::new() }));
+    let mut runtime = Runtime::new();
+    let fs = Rc::new(RefCell::new(VecFS::default()));
 
     runtime.spawn({
         let fs = fs.clone();

@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 
 [dev-dependencies]
+futures = "0.3.31"
 rand = "0.9.0"

@@ -21,14 +21,10 @@ const c = @cImport({
 const FileIO = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    io_receiver: *const fn (db: lib.FileOp(FD)) void,
     allocator: std.mem.Allocator,
 
     pub const FD = usize;
-    pub fn init(
-        allocator: std.mem.Allocator,
-        io_receiver: fn (output: lib.FileOp(FD).Output) void,
-    ) !@This() {
+    pub fn init(allocator: std.mem.Allocator) !@This() {
         const events = Events.init(allocator, {});
         //try events.ensureTotalCapacity(256);
         return .{
@@ -37,7 +33,6 @@ const FileIO = struct {
                 1_000_000,
             ),
             .events = events,
-            .io_receiver = io_receiver,
             .allocator = allocator,
         };
     }
@@ -55,7 +50,7 @@ const FileIO = struct {
     }.compare);
 
     /// Nothing ever happens... until we advance the state of the OS.
-    fn tick(self: *@This(), node: *lib.DB(FileIO)) !void {
+    fn tick(self: *@This(), db: *lib.DB(FileIO)) !void {
         const event = self.events.removeOrNull() orelse return;
 
         switch (event.os_input.file_op) {
@@ -63,7 +58,7 @@ const FileIO = struct {
                 const fd = self.fs.items.len;
                 const file = ArrayListUnmanged(u8){};
                 try self.fs.append(self.allocator, file);
-                self.receiver(node, .{
+                db.receive_io(.{
                     .task_id = event.os_input.task_id,
                     .file_op = .{ .create = @intCast(fd) },
                 });
@@ -83,7 +78,7 @@ const FileIO = struct {
     pub fn send(
         self: *@This(),
         ctx: *Context,
-        msg: lib.os.Input,
+        msg: lib.FileOp(FD).Input,
     ) !void {
         const event = .{
             .priority = ctx.random.int(u64),
@@ -96,18 +91,19 @@ const FileIO = struct {
 const Context = struct {
     random: std.Random,
     stats: c.stats,
-    pub fn receive(self: *@This(), res: lib.Res) void {
-        switch (res) {
-            .create => {
-                self.stats.os_files_created += 1;
-            },
-            else => @panic("TODO: collect more stats"),
-        }
-    }
 };
 
+pub fn onReceive(ctx: *Context, res: lib.Res) void {
+    switch (res) {
+        .create => {
+            ctx.stats.os_files_created += 1;
+        },
+        else => @panic("TODO: collect more stats"),
+    }
+}
+
 const Simulator = struct {
-    node: lib.Node(FileIO, Context),
+    node: lib.Node(FileIO, Context, onReceive),
     ctx: Context,
 
     fn init(allocator: mem.Allocator, random: std.Random) !@This() {
@@ -117,7 +113,7 @@ const Simulator = struct {
         };
         return .{
             .ctx = ctx,
-            .node = try lib.Node(FileIO, Context).init(allocator, ctx.receive),
+            .node = try lib.Node(FileIO, Context, onReceive).init(allocator, ctx),
         };
     }
 

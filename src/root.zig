@@ -19,7 +19,7 @@ const Reqs = struct {
 
     fn init(allocator: mem.Allocator) !@This() {
         return .{
-            .msgs = try std.ArrayListUnmanaged(Req).initCapacity(
+            .reqs = try std.ArrayListUnmanaged(Req).initCapacity(
                 allocator,
                 256,
             ),
@@ -35,15 +35,17 @@ const Reqs = struct {
         self.recycled.deinit(allocator);
     }
 
-    fn add(self: *@This(), msg: Req, allocator: mem.Allocator) !void {
+    fn add(self: *@This(), msg: Req, allocator: mem.Allocator) !ReqID {
         // Reuse a slot if one is available
         if (self.available_ids.popOrNull()) |id| {
             self.reqs.items[id] = msg;
-            return;
+            return id;
         }
 
         // Otherwise, add to the end
-        try self.reqs.append(msg, allocator);
+        const id = self.reqs.items.len;
+        try self.reqs.append(allocator, msg);
+        return id;
     }
 
     fn remove(self: *@This(), id: ReqID, allocator: mem.Allocator) !void {
@@ -86,18 +88,18 @@ pub fn FileOp(comptime FD: type) type {
 pub fn Node(
     comptime FileIO: type,
     comptime Context: type,
-    //comptime Receiver: fn (ctx: *Context, res: Res) void,
+    comptime onReceive: fn (ctx: *Context, res: Res) void,
 ) type {
     return struct {
-        db: DB(FileIO, Context),
+        db: DB(FileIO, Context, onReceive),
         file_io: FileIO,
 
         pub fn init(
             allocator: mem.Allocator,
             ctx: Context,
-        ) @This() {
-            const db = DB(FileIO).init(allocator, ctx.receiver);
-            const file_io = FileIO.init(allocator, db.receive_io);
+        ) !@This() {
+            const db = try DB(FileIO, Context, onReceive).init(allocator, ctx);
+            const file_io = try FileIO.init(allocator);
             return .{ .db = db, .file_io = file_io };
         }
 
@@ -106,28 +108,29 @@ pub fn Node(
             self.file_io.deinit();
         }
 
-        pub fn create_stream(self: *@This(), name: []const u8) void {
-            self.db.send(.{ .create_stream = name }, self.file_io);
+        pub fn create_stream(self: *@This(), name: []const u8) !void {
+            try self.db.send(.{ .create_stream = name }, &self.file_io);
         }
     };
 }
 
 fn DB(
-    comptime FileIO: type,
+    comptime FD: type,
     comptime Context: type,
+    comptime onReceive: fn (ctx: *Context, res: Res) void,
 ) type {
     return struct {
         reqs: Reqs,
-        streams: StringHashMapUnmanaged(FileIO.FD),
+        streams: StringHashMapUnmanaged(FD),
         ctx: Context,
         allocator: mem.Allocator,
 
         pub fn init(
             allocator: mem.Allocator,
             ctx: Context,
-        ) @This() {
+        ) !@This() {
             return .{
-                .reqs = Reqs.init(allocator),
+                .reqs = try Reqs.init(allocator),
                 .streams = .{},
                 .ctx = ctx,
                 .allocator = allocator,
@@ -139,30 +142,30 @@ fn DB(
             self.streams.deinit(self.allocator);
         }
 
-        pub fn send(self: *@This(), req: Req, file_io: anyopaque) !void {
-            const id = try self.reqs.add(req);
+        pub fn send(self: *@This(), req: Req, file_io: anytype) !void {
+            const id = try self.reqs.add(req, self.allocator);
             // given a particular msg, dispatch the appropriate file op
             switch (req) {
                 .create_stream => {
-                    const file_op = FileOp(FileIO.FD).Input{
+                    const file_op = FileOp(FD).Input{
                         .req_id = id,
-                        .args = .{.create},
+                        .args = .create,
                     };
                     file_io.send(id, file_op);
                 },
             }
         }
 
-        fn receive_io(
+        pub fn receive_io(
             self: *@This(),
-            file_op: FileOp(FileIO.FD).Output,
+            file_op: FileOp(FD).Output,
         ) !void {
             const req = try self.reqs.remove(file_op.req_id);
 
             switch (req) {
                 .create_stream => |name| {
                     self.streams.insert(name, file_op.ret_val);
-                    self.ctx.receive(.{.stream_created + name});
+                    onReceive(self.ctx, .{.stream_created + name});
                 },
             }
         }

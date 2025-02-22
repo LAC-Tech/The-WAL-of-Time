@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+foldhash = { version = "0.1.4", default-features = false }
+hashbrown = "0.15.2"
 
 [dev-dependencies]
 futures = "0.3.31"

@@ -1,3 +1,8 @@
+fn main() {
+    println!("Deterministic Simulation Testing");
+}
+
+/*
 use rust::os;
 use std::collections::BinaryHeap;
 
@@ -58,3 +63,4 @@ struct Event {
 fn main() {
     println!("ROFL");
 }
+*/

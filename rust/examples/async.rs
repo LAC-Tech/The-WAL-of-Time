@@ -5,7 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-use rust::OperatingSystem;
+use rust::FileIO;
 
 // An append only file system, support Create, Append, Update, Delete
 #[derive(Default)]
@@ -149,7 +149,7 @@ mod future {
     }
 }
 
-impl OperatingSystem<usize> for VecFS {
+impl FileIO<usize> for VecFS {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
         future::Create { delay_steps: random::<u32>() % 5, fs: self }
     }

@@ -5,9 +5,137 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use foldhash::fast::FixedState;
-use hashbrown::HashMap;
+mod file_io {
+    use super::db;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
 
+    pub enum Args<FD> {
+        Create,
+        Read { buf: Vec<u8>, offset: usize },
+        Append { fd: FD, data: Box<[u8]> },
+        Delete(FD),
+    }
+
+    enum RetVal<FD> {
+        Create(FD),
+        Read(usize),
+        Append(usize),
+        Delete(bool),
+    }
+
+    type Req<FD> = (db::ReqID, Args<FD>);
+    pub type Res<FD> = (db::ReqID, RetVal<FD>);
+
+    pub trait FileIO {
+        type FD;
+        fn send(&mut self, req_id: db::ReqID, args: Args<Self::FD>);
+    }
+}
+
+mod db {
+    use super::file_io;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use foldhash::fast::FixedState;
+    use hashbrown::{HashMap, HashSet, hash_map, hash_set};
+
+    pub type ReqID = u64;
+
+    #[derive(Clone)]
+    enum Req {
+        CreateStream,
+    }
+
+    enum Res {
+        StreamCreated,
+    }
+
+    #[derive(Default)]
+    struct ReqSlotMap {
+        reqs: Vec<Req>,
+        free_indices: Vec<usize>,
+    }
+
+    impl ReqSlotMap {
+        fn add(&mut self, req: Req) -> ReqID {
+            if let Some(index) = self.free_indices.pop() {
+                self.reqs[index] = req;
+                index as ReqID
+            } else {
+                self.reqs.push(req);
+                (self.reqs.len() - 1) as ReqID
+            }
+        }
+
+        fn remove(&mut self, req_id: ReqID) -> Req {
+            let index = req_id as usize;
+            self.free_indices.push(index);
+            self.reqs[index].clone()
+        }
+    }
+
+    // State associated with requests that are in flight
+    struct Inflight {
+        req_stream_names: HashSet<String, FixedState>,
+    }
+
+    struct DB<FD, R> {
+        reqs: ReqSlotMap,
+        inflight: Inflight,
+        receiver: R,
+        streams: HashMap<String, Option<FD>, FixedState>,
+    }
+
+    impl<FD, R: FnMut(Req)> DB<FD, R> {
+        fn create_stream(
+            &mut self,
+            name: String,
+            file_io: &mut impl file_io::FileIO<FD = FD>,
+        ) -> Result<(), &str> {
+            match self.inflight.req_stream_names.entry(name) {
+                hash_set::Entry::Vacant(entry) => {
+                    entry.insert();
+                }
+                hash_set::Entry::Occupied(_) => {
+                    return Err("Stream name already exists")
+                }
+            }
+
+            let req_id = self.reqs.add(Req::CreateStream);
+
+            file_io.send(req_id, file_io::Args::Create);
+
+            Ok(())
+        }
+
+        fn receive_io(&mut self, (req_id, ret_val): file_io::Res<FD>) {
+            let req = self.reqs.remove(req_id);
+
+            match req {
+                Req::CreateStream(name) => self.streams.insert,
+            }
+        }
+
+        /*
+        pub fn receive_io(
+            self: *@This(),
+            file_op: FileOp(FD).Output,
+        ) !void {
+            const req = try self.reqs.remove(file_op.req_id);
+
+            switch (req) {
+                .create_stream => |name| {
+                    self.streams.insert(name, file_op.ret_val);
+                    onReceive(self.ctx, .{.stream_created + name});
+                },
+            }
+        }
+        */
+    }
+}
+
+/*
 pub trait FileIO<FD> {
     fn create(&mut self) -> impl Future<Output = FD> + '_;
     fn read<'a>(
@@ -47,3 +175,4 @@ impl<FD, FIO: FileIO<FD>> DB<FD, FIO> {
         }
     }
 }
+*/

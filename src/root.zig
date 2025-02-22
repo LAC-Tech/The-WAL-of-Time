@@ -86,10 +86,10 @@ pub fn FileOp(comptime FD: type) type {
 pub fn Node(
     comptime FileIO: type,
     comptime Context: type,
-    comptime Receiver: fn (ctx: *Context, res: Res) void,
+    //comptime Receiver: fn (ctx: *Context, res: Res) void,
 ) type {
     return struct {
-        db: DB(FileIO, Context, Receiver),
+        db: DB(FileIO, Context),
         file_io: FileIO,
 
         pub fn init(
@@ -115,22 +115,21 @@ pub fn Node(
 fn DB(
     comptime FileIO: type,
     comptime Context: type,
-    comptime Receiver: fn (ctx: *Context, res: Res) void,
 ) type {
     return struct {
         reqs: Reqs,
         streams: StringHashMapUnmanaged(FileIO.FD),
-        receiver: Receiver,
+        ctx: Context,
         allocator: mem.Allocator,
 
         pub fn init(
             allocator: mem.Allocator,
-            receiver: fn (res: Res) void,
+            ctx: Context,
         ) @This() {
             return .{
                 .reqs = Reqs.init(allocator),
                 .streams = .{},
-                .receiver = receiver,
+                .ctx = ctx,
                 .allocator = allocator,
             };
         }
@@ -163,7 +162,7 @@ fn DB(
             switch (req) {
                 .create_stream => |name| {
                     self.streams.insert(name, file_op.ret_val);
-                    self.receiver(.{.stream_created + name});
+                    self.ctx.receive(.{.stream_created + name});
                 },
             }
         }

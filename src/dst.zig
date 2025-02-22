@@ -21,7 +21,7 @@ const c = @cImport({
 const FileIO = struct {
     fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
     events: Events,
-    io_receiver: fn (db: lib.FileOp(FD)) void,
+    io_receiver: *const fn (db: lib.FileOp(FD)) void,
     allocator: std.mem.Allocator,
 
     pub const FD = usize;
@@ -96,7 +96,7 @@ const FileIO = struct {
 const Context = struct {
     random: std.Random,
     stats: c.stats,
-    fn receive(self: *@This(), res: lib.Res) void {
+    pub fn receive(self: *@This(), res: lib.Res) void {
         switch (res) {
             .create => {
                 self.stats.os_files_created += 1;
@@ -107,16 +107,17 @@ const Context = struct {
 };
 
 const Simulator = struct {
-    node: lib.Node(FileIO, Context, Context.receive),
+    node: lib.Node(FileIO, Context),
     ctx: Context,
 
     fn init(allocator: mem.Allocator, random: std.Random) !@This() {
+        const ctx = .{
+            .random = random,
+            .stats = .{ .os_files_created = 0 },
+        };
         return .{
+            .ctx = ctx,
             .node = try lib.Node(FileIO, Context).init(allocator, ctx.receive),
-            .ctx = .{
-                .random = random,
-                .stats = .{ .os_files_created = 0 },
-            },
         };
     }
 

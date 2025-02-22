@@ -136,14 +136,11 @@ mod future {
                 return Poll::Pending
             }
 
-            let fd = self.fd;
-            let success =
-                if fd < self.fs.files.len() && self.fs.files[fd].is_some() {
-                    self.fs.files[fd] = None;
-                    true
-                } else {
-                    false
-                };
+            let fd = self.fd; // avoids borrow
+            let success = self.fs.files.get_mut(fd).map_or(false, |file_opt| {
+                *file_opt = None;
+                true
+            });
             Poll::Ready(success)
         }
     }
@@ -222,20 +219,19 @@ impl Runtime {
         static VTABLE: RawWakerVTable =
             RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-        if self.waker.is_none() {
-            self.waker = Some(unsafe {
+        self.waker
+            .get_or_insert_with(|| unsafe {
                 Waker::from_raw(RawWaker::new(
                     std::ptr::null::<()>() as *const _,
                     &VTABLE,
                 ))
-            });
-        }
-        self.waker.clone().unwrap()
+            })
+            .clone()
     }
 
     fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
-        let priority = random::<u32>();
-        self.tasks.push(Task { priority, future: Box::pin(future) });
+        let t = Task { priority: random::<u32>(), future: Box::pin(future) };
+        self.tasks.push(t);
     }
 
     fn run(&mut self) {

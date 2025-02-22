@@ -1,16 +1,25 @@
-use rand::random;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+use rand::SeedableRng;
 use rust::FileIO;
 
-// An append only file system, support Create, Append, Update, Delete
-#[derive(Default)]
-struct FS {
-    files: Vec<Option<Vec<u8>>>,
+// Configuration parameters for the DST
+// In one place for ease of tweaking
+mod config {
+    /*
+    const MAX_TIME_IN_MS: u64 = 1000 * 60 * 60 * 24; // 24 hours,
+    const CREATE_STREAM_CHANCE: f64 = 0.1;
+    */
+
+    const MAX_IO_DELAY_STEPS: u32 = 5;
+
+    pub fn delay_steps(rng: &mut impl rand::Rng) -> u32 {
+        rng.random::<u32>() % MAX_IO_DELAY_STEPS
+    }
 }
 
 mod future {
@@ -146,9 +155,22 @@ mod future {
     }
 }
 
+// An append only file system, support Create, Append, Update, Delete
+struct FS {
+    files: Vec<Option<Vec<u8>>>,
+    rng: rand::rngs::SmallRng,
+}
+
+impl FS {
+    fn new(seed: u64) -> Self {
+        Self { files: vec![], rng: rand::rngs::SmallRng::seed_from_u64(seed) }
+    }
+}
+
 impl FileIO<usize> for FS {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
-        future::Create { delay_steps: random::<u32>() % 5, fs: self }
+        let delay_steps = config::delay_steps(&mut self.rng);
+        future::Create { delay_steps, fs: self }
     }
 
     fn read<'a>(
@@ -156,7 +178,8 @@ impl FileIO<usize> for FS {
         buf: &'a mut Vec<u8>,
         offset: usize,
     ) -> impl Future<Output = usize> + 'a {
-        future::Read { delay_steps: random::<u32>() % 5, fs: self, buf, offset }
+        let delay_steps = config::delay_steps(&mut self.rng);
+        future::Read { delay_steps, fs: self, buf, offset }
     }
 
     fn append(
@@ -164,16 +187,13 @@ impl FileIO<usize> for FS {
         fd: usize,
         data: Box<[u8]>,
     ) -> impl Future<Output = usize> + '_ {
-        future::Append {
-            delay_steps: random::<u32>() % 5,
-            fs: self,
-            fd,
-            data: Some(data),
-        }
+        let delay_steps = config::delay_steps(&mut self.rng);
+        future::Append { delay_steps, fs: self, fd, data: Some(data) }
     }
 
     fn delete(&mut self, fd: usize) -> impl Future<Output = bool> + '_ {
-        future::Delete { delay_steps: random::<u32>() % 5, fs: self, fd }
+        let delay_steps = config::delay_steps(&mut self.rng);
+        future::Delete { delay_steps, fs: self, fd }
     }
 }
 
@@ -229,8 +249,13 @@ impl Runtime {
             .clone()
     }
 
-    fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
-        let t = Task { priority: random::<u32>(), future: Box::pin(future) };
+    fn spawn(
+        &mut self,
+        rng: &mut impl rand::Rng,
+        future: impl Future<Output = ()> + 'static,
+    ) {
+        let t =
+            Task { priority: rng.random::<u32>(), future: Box::pin(future) };
         self.tasks.push(t);
     }
 
@@ -267,6 +292,7 @@ async fn run_fs(mut fs: FS) {
 
 fn main() {
     let mut runtime = Runtime::new();
-    runtime.spawn(run_fs(FS::default()));
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
+    runtime.spawn(&mut rng, run_fs(FS::new(42)));
     runtime.run();
 }

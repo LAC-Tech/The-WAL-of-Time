@@ -4,19 +4,61 @@ const mem = std.mem;
 const posix = std.posix;
 const testing = std.testing;
 
-pub fn AsyncRuntime(
-    comptime FD: type, 
-    comptime OSFunctor: fn(fd: FD) type,
-    /// Some state, so that callbacks can effect the outside world.
-    /// What Baker/Hewitt called "proper environment", AFAICT
-    comptime Env: type,
-) type {
+const StringHashMapUnmanaged = std.StringHashMapUnmanaged;
+
+// Unique identifier for messages
+const ReqID = u64;
+
+const Req = union(enum) { create_stream: []const u8 };
+pub const Res = union(enum) { stream_created: []const u8 };
+
+// In flight messages, as a sort of ECS list
+const Reqs = struct {
+    reqs: std.ArrayListUnmanaged(Req),
+    available_ids: std.ArrayListUnmanaged(ReqID),
+
+    fn init(allocator: mem.Allocator) !@This() {
+        return .{
+            .msgs = try std.ArrayListUnmanaged(Req).initCapacity(
+                allocator,
+                256,
+            ),
+            .available_ids = try std.ArrayListUnmanaged(ReqID).initCapacity(
+                allocator,
+                128,
+            ),
+        };
+    }
+
+    fn deinit(self: *@This(), allocator: mem.Allocator) void {
+        self.tasks.deinit(allocator);
+        self.recycled.deinit(allocator);
+    }
+
+    fn add(self: *@This(), msg: Req, allocator: mem.Allocator) !void {
+        // Reuse a slot if one is available
+        if (self.available_ids.popOrNull()) |id| {
+            self.reqs.items[id] = msg;
+            return;
+        }
+
+        // Otherwise, add to the end
+        try self.reqs.append(msg, allocator);
+    }
+
+    fn remove(self: *@This(), id: ReqID, allocator: mem.Allocator) !void {
+        const msg = self.reqs.items[id];
+        try self.available_ids.append(id, allocator);
+        return msg;
+    }
+};
+
+pub fn FileOp(comptime FD: type) type {
     return struct {
-        const TaskID = u64;
-        pub const OsInput = struct {
-            task_id: TaskID,
+        pub const Input = struct {
+            req_id: ReqID,
             // Represent inputs for syscalls
-            file_op: union(enum) {
+            args: union(enum) {
                 create,
                 read: struct { fd: FD, buf: []u8, offset: usize },
                 append: struct { fd: FD, data: []const u8 },
@@ -24,162 +66,110 @@ pub fn AsyncRuntime(
             },
         };
 
-        pub const OsOutput = struct {
-            task_id: TaskID,
+        pub const Output = struct {
+            req_id: ReqID,
             // Represent outputs for syscalls
-            file_op: union(enum) {
+            ret_val: union(enum) {
                 create: posix.fd_t,
                 read: usize,
                 append: usize,
                 delete: bool,
             },
         };
-
-        const OS = OSFunctor(FD);
-
-        // We always know what type the function is at this point
-        const Callback = union {
-            create: *const fn(env: *Env, fd: FD) void,
-        };
-
-        // "Unit of execution"
-        const Task = struct {env: *Env, callback: Callback};
-
-        tasks: std.ArrayListUnmanaged(Task),
-        recycled: std.ArrayListUnmanaged(TaskID),
-        allocator: mem.Allocator,
-
-        fn init(allocator: mem.Allocator) !@This() {
-            return .{
-                .tasks = try std.ArrayListUnmanaged(Task).initCapacity(
-                    allocator,
-                    256,
-                ),
-                .recycled = try std.ArrayListUnmanaged(TaskID).initCapacity(
-                    allocator,
-                    128,
-                ),
-                .allocator = allocator,
-            };
-        }
-
-        fn deinit(self: *@This()) void {
-            self.tasks.deinit(self.allocator);
-            self.recycled.deinit(self.allocator);
-        }
-
-        fn push(self: *@This(), t: Task) !usize {
-            if (self.recycled.popOrNull()) |index| {
-                self.tasks.items[index] = t;
-                return index;
-            } else {
-                const index = self.tasks.items.len;
-                try self.tasks.append(self.allocator, t);
-                return index;
-            }
-        }
-
-        fn pop(self: *@This(), task_id: TaskID) Task {
-            self.recycled.append(self.allocator, task_id) catch |err| {
-                @panic(@errorName(err));
-            };
-            return self.tasks.items[@intCast(task_id)];
-        }
-    };
-}
-
-pub fn DB(
-    comptime FD: type, 
-    comptime OSFunctor: fn(fd: FD) type,
-    comptime Env: type,
-) type {
-    return struct {
-        async_runtime: AsyncRuntime(FD, OSFunctor, Env),
-
-        pub fn init(allocator: mem.Allocator) !@This() {
-            return .{
-                .async_runtime = try AsyncRuntime(FD,OSFunctor, Env,).init(allocator),
-            };
-        }
-
-        fn os_receive(self: *@This(), msg: os.Output) void {
-            switch (msg.file_op) {
-                .create => |fd| {
-                    const t = self.async_runtime.pop(msg.task_id);
-                    const fp: *const fn (*@This(), posix.fd_t) void =
-                        @ptrCast(t.callback);
-
-                    fp(self, fd);
-                },
-                .read => @panic("TODO: handle receiving 'read' from OS"),
-                .append => @panic("TODO: handle receiving 'append' from OS"),
-                .delete => @panic("TODO: handle receiving 'delete' from OS"),
-            }
-        }
-
-        pub fn deinit(self: *@This()) void {
-            self.os.deinit();
-            self.async_runtime.deinit();
-        }
-
-        pub fn create_stream(
-            self: *@This(),
-            ctx: *UserCtx,
-            cb: *const fn (ctx: *UserCtx, fd: posix.fd_t) void,
-        ) !void {
-            const index = try self.async_runtime.push(.{
-                .ctx = ctx,
-                .callback = @ptrCast(cb),
-            });
-            try self.os.send(ctx, .{ .task_id = index, .file_op = .create });
-        }
     };
 }
 
 //// TODO: test if determinstic
 //// Looking at the code I am 95% sure..
 //const AutoHashMap = std.AutoHashMap;
-//const StringHashMapUnmanaged = std.StringHashMapUnmanaged;
-//
-//pub fn DB(comptime OS: type) type {
-//    return struct {
-//        device_id: DeviceID,
-//        os: *OS,
-//        streams: StringHashMapUnmanaged(Stream(OS)),
-//        allocator: mem.Allocator,
-//
-//        pub fn init(
-//            device_id: DeviceID,
-//            os: *OS,
-//            allocator: mem.Allocator,
-//        ) @This() {
-//            return .{
-//                .device_id = device_id,
-//                .os = os,
-//                .streams = .{},
-//                .allocator = allocator,
-//            };
-//        }
-//
-//        pub fn deinit(self: *@This()) void {
-//            // TODO: who owns the keys?
-//            self.streams.deinit(self.allocator);
-//        }
-//
-//        fn stream_from_fd(ctx: anytype, fd: posix.OpenError!posix.fd_t) void {
-//            return Stream.init(ctx.os, fd);
-//        }
-//        pub fn create_stream(
-//            self: *@This(),
-//            comptime Ctx: type,
-//            ctx: *Ctx,
-//            stream_created: *const fn() void,
-//        ) !void {
-//            try self.os.create_file(ctx, stream_from_fd);
-//        }
-//    };
-//}
-//
+
+pub fn Node(
+    comptime FileIO: type,
+    comptime Context: type,
+    comptime Receiver: fn (ctx: *Context, res: Res) void,
+) type {
+    return struct {
+        db: DB(FileIO, Context, Receiver),
+        file_io: FileIO,
+
+        pub fn init(
+            allocator: mem.Allocator,
+            ctx: Context,
+        ) @This() {
+            const db = DB(FileIO).init(allocator, ctx.receiver);
+            const file_io = FileIO.init(allocator, db.receive_io);
+            return .{ .db = db, .file_io = file_io };
+        }
+
+        pub fn deinit(self: *@This()) @This() {
+            self.db.deinit();
+            self.file_io.deinit();
+        }
+
+        pub fn create_stream(self: *@This(), name: []const u8) void {
+            self.db.send(.{ .create_stream = name }, self.file_io);
+        }
+    };
+}
+
+fn DB(
+    comptime FileIO: type,
+    comptime Context: type,
+    comptime Receiver: fn (ctx: *Context, res: Res) void,
+) type {
+    return struct {
+        reqs: Reqs,
+        streams: StringHashMapUnmanaged(FileIO.FD),
+        receiver: Receiver,
+        allocator: mem.Allocator,
+
+        pub fn init(
+            allocator: mem.Allocator,
+            receiver: fn (res: Res) void,
+        ) @This() {
+            return .{
+                .reqs = Reqs.init(allocator),
+                .streams = .{},
+                .receiver = receiver,
+                .allocator = allocator,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            // TODO: keys need to be freed.
+            self.streams.deinit(self.allocator);
+        }
+
+        pub fn send(self: *@This(), req: Req, file_io: anyopaque) !void {
+            const id = try self.reqs.add(req);
+            // given a particular msg, dispatch the appropriate file op
+            switch (req) {
+                .create_stream => {
+                    const file_op = FileOp(FileIO.FD).Input{
+                        .req_id = id,
+                        .args = .{.create},
+                    };
+                    file_io.send(id, file_op);
+                },
+            }
+        }
+
+        fn receive_io(
+            self: *@This(),
+            file_op: FileOp(FileIO.FD).Output,
+        ) !void {
+            const req = try self.reqs.remove(file_op.req_id);
+
+            switch (req) {
+                .create_stream => |name| {
+                    self.streams.insert(name, file_op.ret_val);
+                    self.receiver(.{.stream_created + name});
+                },
+            }
+        }
+    };
+}
+
 //fn Stream(comptime OS: type) type {
 //    return struct {
 //        os: *OS,

@@ -4,14 +4,13 @@ use std::collections::BinaryHeap;
 
 use rand::prelude::*;
 
-use rust::{DB, DBReq, DBRes, FileIO, IOArgs, IORetVal};
+use rust::{DB, FileIO, IOReq, IORes, UserRes};
 
 type FD = usize;
 
 struct Event {
     priority: u64,
-    req: DBReq,
-    io_args: IOArgs<FD>,
+    req: IOReq<FD>,
 }
 
 impl PartialEq for Event {
@@ -55,26 +54,26 @@ impl QueueOS {
     // Advances the state of the OS.
     // Should not happen every sim tick, I don't think
     fn tick(&mut self, db: &mut DB<FD>, user_ctx: &mut UserCtx) {
-        match self.events.pop() {
-            None => return,
-            Some(e) => match e.io_args {
-                IOArgs::Create => {
-                    self.files.push(vec![]);
-                    let fd = self.files.len() - 1;
-                    db.receive_io(e.req, IORetVal::Read(fd), user_ctx);
-                    self.stats.files_created += 1;
-                }
-                _ => panic!("TODO: handle more events"),
-            },
-        }
+        let Some(e) = self.events.pop() else { return };
+        let res = match e.req {
+            IOReq::Create(user_data) => {
+                self.files.push(vec![]);
+                let fd = self.files.len() - 1;
+                self.stats.files_created += 1;
+                IORes::Create { fd, user_data }
+            }
+            _ => panic!("TODO: handle more events"),
+        };
+
+        db.receive_io(res, user_ctx);
     }
 }
 
 impl FileIO for QueueOS {
     type FD = FD;
-    fn send(&mut self, req: DBReq, io_args: rust::IOArgs<Self::FD>) {
+    fn send(&mut self, req: IOReq<FD>) {
         let priority: u64 = self.rng.random();
-        let e = Event { priority, req, io_args };
+        let e = Event { priority, req };
         self.events.push(e);
     }
 }
@@ -82,8 +81,8 @@ impl FileIO for QueueOS {
 struct UserCtx {}
 
 impl rust::UserCtx for UserCtx {
-    fn send<'a>(&mut self, db_res: DBRes<'a>) {
-        println!("DB Response {:?} received", db_res)
+    fn send<'a>(&mut self, res: UserRes<'a>) {
+        println!("DB Response {:?} received", res)
     }
 }
 

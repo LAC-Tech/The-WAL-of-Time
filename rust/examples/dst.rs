@@ -113,7 +113,7 @@ impl<'a> Simulator<'a> {
 
     fn tick(&mut self) {
         if config::CREATE_STREAM_CHANCE > self.rng.random() {
-            self.db.create_stream("test", &mut self.os).unwrap();
+            self.db.create_stream(self.rng.random(), &mut self.os).unwrap();
         }
         if config::ADVANCE_OS_CHANCE > self.rng.random() {
             self.os.tick(&mut self.db, &mut self.user_ctx);

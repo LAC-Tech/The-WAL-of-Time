@@ -124,7 +124,7 @@ impl<'a, FD> DB<'a, FD> {
 
                     match self.streams.entry(name) {
                         hash_map::Entry::Occupied(_) => {
-                            panic!("Duplicate stream name")
+                            panic!("Duplicate stream name: {}", name)
                         }
                         hash_map::Entry::Vacant(entry) => {
                             entry.insert(fd);

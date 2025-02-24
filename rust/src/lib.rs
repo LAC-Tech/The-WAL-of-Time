@@ -4,7 +4,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use foldhash::fast::FixedState;
-use hashbrown::{HashMap, HashSet, hash_map, hash_set};
+use hashbrown::{HashMap, hash_map};
 
 pub enum IOArgs<FD> {
     Create,
@@ -39,6 +39,7 @@ const _: () = {
 };
 
 /// Response: node -> user
+#[derive(Debug)]
 pub enum DBRes<'a> {
     StreamCreated(&'a str),
 }
@@ -72,20 +73,25 @@ impl<'a> RequestedStreamNames<'a> {
 
     fn remove(&mut self, index: u8) -> &'a str {
         self.free_indices.push(index);
-        let removed = core::mem::replace(&mut self.names[index as usize], "");
+        let removed = core::mem::take(&mut self.names[index as usize]);
         self.free_indices.push(index as u8); // Mark slot as free
         removed
     }
 }
 
-pub struct DB<'a, FD> {
-    rsn: RequestedStreamNames<'a>,
-    streams: HashMap<&'a str, FD, FixedState>,
-}
-
+#[derive(Debug)]
 pub enum CreateStreamErr {
     DuplicateName,
     ReservationLimitExceeded,
+}
+
+pub trait UserCtx {
+    fn send<'a>(&mut self, db_res: DBRes<'a>);
+}
+
+pub struct DB<'a, FD> {
+    rsn: RequestedStreamNames<'a>,
+    streams: HashMap<&'a str, FD, FixedState>,
 }
 
 impl<'a, FD> DB<'a, FD> {
@@ -110,7 +116,7 @@ impl<'a, FD> DB<'a, FD> {
         &mut self,
         db_req: DBReq,
         ret_val: IORetVal<FD>,
-        receiver: &mut impl FnMut(DBRes),
+        user_ctx: &mut impl UserCtx,
     ) {
         let db_res: DBRes = match (db_req, ret_val) {
             (DBReq::CreateStream { name_idx, .. }, IORetVal::Create(fd)) => {
@@ -131,7 +137,7 @@ impl<'a, FD> DB<'a, FD> {
             }
         };
 
-        receiver(db_res)
+        user_ctx.send(db_res);
     }
 }
 

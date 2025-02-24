@@ -30,15 +30,26 @@ impl Ord for Event {
     }
 }
 
+#[derive(Debug, Default)]
+struct OSStats {
+    files_created: u64,
+}
+
 struct QueueOS {
     events: BinaryHeap<Event>,
     files: Vec<Vec<u8>>,
     rng: SmallRng,
+    stats: OSStats,
 }
 
 impl QueueOS {
-    fn new(rng: SmallRng) -> Self {
-        Self { events: BinaryHeap::new(), files: vec![], rng }
+    fn new(seed: u64) -> Self {
+        Self {
+            events: BinaryHeap::new(),
+            files: vec![],
+            rng: SmallRng::seed_from_u64(seed),
+            stats: OSStats::default(),
+        }
     }
 
     // Advances the state of the OS.
@@ -51,6 +62,7 @@ impl QueueOS {
                     self.files.push(vec![]);
                     let fd = self.files.len() - 1;
                     db.receive_io(e.req, IORetVal::Read(fd), user_ctx);
+                    self.stats.files_created += 1;
                 }
                 _ => panic!("TODO: handle more events"),
             },
@@ -68,28 +80,58 @@ impl FileIO for QueueOS {
 }
 
 struct UserCtx {}
-impl FnMut(DBRes<'_>) for UserCtx {
-    extern "rust-call" fn call_mut(&mut self, args: DBRes) -> Self::Output {
-        println!("user ctx received a result!!11!");
-    _
+
+impl rust::UserCtx for UserCtx {
+    fn send<'a>(&mut self, db_res: DBRes<'a>) {
+        println!("DB Response {:?} received", db_res)
+    }
 }
 
 // Configuration parameters for the DST
 // In one place for ease of tweaking
 mod config {
-    /*
-    const MAX_TIME_IN_MS: u64 = 1000 * 60 * 60 * 24; // 24 hours,
-    const CREATE_STREAM_CHANCE: f64 = 0.1;
-    */
+    pub const MAX_TIME_IN_MS: u64 = 1000 * 60 * 60 * 24; // 24 hours,
+    pub const CREATE_STREAM_CHANCE: f64 = 0.01;
+    pub const ADVANCE_OS_CHANCE: f64 = 0.1;
+}
 
-    const MAX_IO_DELAY_STEPS: u32 = 5;
+struct Simulator<'a> {
+    rng: SmallRng,
+    user_ctx: UserCtx,
+    db: DB<'a, FD>,
+    os: QueueOS,
+}
 
-    pub fn delay_steps(rng: &mut impl rand::Rng) -> u32 {
-        rng.random::<u32>() % MAX_IO_DELAY_STEPS
+impl<'a> Simulator<'a> {
+    fn new(seed: u64) -> Self {
+        let rng = rand::rngs::SmallRng::seed_from_u64(seed);
+        let user_ctx = UserCtx {};
+        let db = DB::new(seed);
+        let os = QueueOS::new(seed);
+
+        Self { rng, user_ctx, os, db }
     }
+
+    fn tick(&mut self) {
+        if config::CREATE_STREAM_CHANCE > self.rng.random() {
+            self.db.create_stream("test", &mut self.os).unwrap();
+        }
+        if config::ADVANCE_OS_CHANCE > self.rng.random() {
+            self.os.tick(&mut self.db, &mut self.user_ctx);
+        }
+    }
+}
+
+fn bg_simulation(sim: &mut Simulator) {
+    for time in (0..=config::MAX_TIME_IN_MS).step_by(10) {
+        sim.tick();
+    }
+
+    println!("{:?}", sim.os.stats);
 }
 
 fn main() {
     println!("Deterministic simulation tester");
-    let rng = rand::rngs::SmallRng::seed_from_u64(0);
+    let mut sim = Simulator::new(0);
+    bg_simulation(&mut sim);
 }

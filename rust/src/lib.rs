@@ -43,21 +43,23 @@ mod db {
     pub type ReqID = u64;
 
     #[derive(Clone)]
-    enum Req {
-        CreateStream,
+    enum Req<'a> {
+        CreateStream(&'a str),
     }
 
     enum Res {
-        StreamCreated,
+        StreamCreated(String),
     }
 
+    // State associated with requests that are in flight
     #[derive(Default)]
-    struct ReqSlotMap {
+    struct Inflight<'a> {
+        req_stream_names: HashSet<String, FixedState>,
         reqs: Vec<Req>,
         free_indices: Vec<usize>,
     }
 
-    impl ReqSlotMap {
+    impl Inflight {
         fn add(&mut self, req: Req) -> ReqID {
             if let Some(index) = self.free_indices.pop() {
                 self.reqs[index] = req;
@@ -73,15 +75,23 @@ mod db {
             self.free_indices.push(index);
             self.reqs[index].clone()
         }
-    }
 
-    // State associated with requests that are in flight
-    struct Inflight {
-        req_stream_names: HashSet<String, FixedState>,
+        fn create_stream(&mut self, name: String) -> Result<ReqID, &str> {
+            match self.req_stream_names.entry(name) {
+                hash_set::Entry::Vacant(entry) => {
+                    entry.insert();
+                }
+                hash_set::Entry::Occupied(_) => {
+                    return Err("Stream name already exists")
+                }
+            }
+
+            let req_id = self.reqs.add(Req::CreateStream(&name));
+            Ok(req_id)
+        }
     }
 
     struct DB<FD, R> {
-        reqs: ReqSlotMap,
         inflight: Inflight,
         receiver: R,
         streams: HashMap<String, Option<FD>, FixedState>,
@@ -93,27 +103,16 @@ mod db {
             name: String,
             file_io: &mut impl file_io::FileIO<FD = FD>,
         ) -> Result<(), &str> {
-            match self.inflight.req_stream_names.entry(name) {
-                hash_set::Entry::Vacant(entry) => {
-                    entry.insert();
-                }
-                hash_set::Entry::Occupied(_) => {
-                    return Err("Stream name already exists")
-                }
-            }
-
-            let req_id = self.reqs.add(Req::CreateStream);
-
-            file_io.send(req_id, file_io::Args::Create);
-
-            Ok(())
+            self.inflight.create_stream(name).map(|req_id| {
+                file_io.send(req_id, file_io::Args::Create);
+            })
         }
 
         fn receive_io(&mut self, (req_id, ret_val): file_io::Res<FD>) {
-            let req = self.reqs.remove(req_id);
+            let req = self.inflight.remove(req_id);
 
             match req {
-                Req::CreateStream(name) => self.streams.insert,
+                Req::CreateStream(name) => self.streams.insert(name, ret_val),
             }
         }
 

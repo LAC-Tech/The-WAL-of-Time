@@ -4,174 +4,124 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use foldhash::fast::FixedState;
+use hashbrown::{HashMap, HashSet, hash_map, hash_set};
 
-mod file_io {
-    use super::db;
-    use alloc::boxed::Box;
-    use alloc::vec::Vec;
+pub enum IOArgs<FD> {
+    Create,
+    Read { buf: Vec<u8>, offset: usize },
+    Append { fd: FD, data: Box<[u8]> },
+    Delete(FD),
+}
 
-    pub enum Args<FD> {
-        Create,
-        Read { buf: Vec<u8>, offset: usize },
-        Append { fd: FD, data: Box<[u8]> },
-        Delete(FD),
+pub enum IORetVal<FD> {
+    Create(FD),
+    Read(usize),
+    Append(usize),
+    Delete(bool),
+}
+
+//pub type IORes<FD> = (DBReq, IORetVal<FD>);
+
+pub trait FileIO {
+    type FD;
+    fn send(&mut self, req_id: DBReq, args: IOArgs<Self::FD>);
+}
+
+/// Requests: user -> node #[repr(u8)]
+pub enum DBReq {
+    CreateStream { name_idx: u8, _padding: u32 },
+}
+
+const _: () = {
+    if core::mem::size_of::<DBReq>() != 8 {
+        panic!("Requests should be 8 bytes to fit into io uring payloads");
+    }
+};
+
+/// Response: node -> user
+enum DBRes<'a> {
+    StreamCreated(&'a str),
+}
+
+/// Streams that are waiting to be created
+#[derive(Default)]
+struct RequestedStreamNames {
+    names: Vec<String>, // TODO: just use flat array of 256 elems?
+    free_indices: Vec<u8>,
+}
+
+impl RequestedStreamNames {
+    /// Index if it succeeds, None if it's a duplicate
+    fn add(&mut self, name: String) -> Result<u8, CreateStreamErr> {
+        if self.names.contains(&name) {
+            return Err(CreateStreamErr::DuplicateName)
+        }
+        let index = if let Some(index) = self.free_indices.pop() {
+            self.names[index as usize] = name;
+            index
+        } else {
+            if self.names.len() >= 256 {
+                return Err(CreateStreamErr::ReservationLimitExceeded)
+            }
+            self.names.push(name);
+            (self.names.len() - 1).try_into().unwrap()
+        };
+
+        Ok(index)
     }
 
-    enum RetVal<FD> {
-        Create(FD),
-        Read(usize),
-        Append(usize),
-        Delete(bool),
-    }
-
-    type Req<FD> = (db::ReqID, Args<FD>);
-    pub type Res<FD> = (db::ReqID, RetVal<FD>);
-
-    pub trait FileIO {
-        type FD;
-        fn send(&mut self, req_id: db::ReqID, args: Args<Self::FD>);
+    fn remove(&mut self, index: u8) -> String {
+        self.free_indices.push(index);
+        let removed =
+            core::mem::replace(&mut self.names[index as usize], String::new());
+        self.free_indices.push(index as u8); // Mark slot as free
+        removed
     }
 }
 
-mod db {
-    use super::file_io;
-    use alloc::string::String;
-    use alloc::vec::Vec;
-    use foldhash::fast::FixedState;
-    use hashbrown::{HashMap, HashSet, hash_map, hash_set};
-
-    pub type ReqID = u64;
-
-    #[derive(Clone)]
-    enum Req<'a> {
-        CreateStream(&'a str),
-    }
-
-    enum Res {
-        StreamCreated(String),
-    }
-
-    // State associated with requests that are in flight
-    #[derive(Default)]
-    struct Inflight<'a> {
-        req_stream_names: HashSet<String, FixedState>,
-        reqs: Vec<Req>,
-        free_indices: Vec<usize>,
-    }
-
-    impl Inflight {
-        fn add(&mut self, req: Req) -> ReqID {
-            if let Some(index) = self.free_indices.pop() {
-                self.reqs[index] = req;
-                index as ReqID
-            } else {
-                self.reqs.push(req);
-                (self.reqs.len() - 1) as ReqID
-            }
-        }
-
-        fn remove(&mut self, req_id: ReqID) -> Req {
-            let index = req_id as usize;
-            self.free_indices.push(index);
-            self.reqs[index].clone()
-        }
-
-        fn create_stream(&mut self, name: String) -> Result<ReqID, &str> {
-            match self.req_stream_names.entry(name) {
-                hash_set::Entry::Vacant(entry) => {
-                    entry.insert();
-                }
-                hash_set::Entry::Occupied(_) => {
-                    return Err("Stream name already exists")
-                }
-            }
-
-            let req_id = self.reqs.add(Req::CreateStream(&name));
-            Ok(req_id)
-        }
-    }
-
-    struct DB<FD, R> {
-        inflight: Inflight,
-        receiver: R,
-        streams: HashMap<String, Option<FD>, FixedState>,
-    }
-
-    impl<FD, R: FnMut(Req)> DB<FD, R> {
-        fn create_stream(
-            &mut self,
-            name: String,
-            file_io: &mut impl file_io::FileIO<FD = FD>,
-        ) -> Result<(), &str> {
-            self.inflight.create_stream(name).map(|req_id| {
-                file_io.send(req_id, file_io::Args::Create);
-            })
-        }
-
-        fn receive_io(&mut self, (req_id, ret_val): file_io::Res<FD>) {
-            let req = self.inflight.remove(req_id);
-
-            match req {
-                Req::CreateStream(name) => self.streams.insert(name, ret_val),
-            }
-        }
-
-        /*
-        pub fn receive_io(
-            self: *@This(),
-            file_op: FileOp(FD).Output,
-        ) !void {
-            const req = try self.reqs.remove(file_op.req_id);
-
-            switch (req) {
-                .create_stream => |name| {
-                    self.streams.insert(name, file_op.ret_val);
-                    onReceive(self.ctx, .{.stream_created + name});
-                },
-            }
-        }
-        */
-    }
-}
-
-/*
-pub trait FileIO<FD> {
-    fn create(&mut self) -> impl Future<Output = FD> + '_;
-    fn read<'a>(
-        &'a mut self,
-        buf: &'a mut Vec<u8>,
-        offset: usize,
-    ) -> impl Future<Output = usize> + 'a;
-    fn append(
-        &mut self,
-        fd: FD,
-        data: Box<[u8]>,
-    ) -> impl Future<Output = usize> + '_;
-    fn delete(&mut self, fd: FD) -> impl Future<Output = bool> + '_;
-}
-
-pub struct DB<FD, FIO: FileIO<FD>> {
-    file_io: FIO,
+pub struct DB<FD, R> {
+    rsn: RequestedStreamNames,
+    receiver: R,
     streams: HashMap<String, FD, FixedState>,
 }
 
-impl<FD, FIO: FileIO<FD>> DB<FD, FIO> {
-    pub fn new(file_io: FIO, seed: u64) -> Self {
-        let streams = HashMap::with_hasher(FixedState::with_seed(seed));
-        Self { file_io, streams }
+pub enum CreateStreamErr {
+    DuplicateName,
+    ReservationLimitExceeded,
+}
+
+impl<FD, R: FnMut(DBRes)> DB<FD, R> {
+    pub fn create_stream(
+        &mut self,
+        name: String,
+        file_io: &mut impl FileIO<FD = FD>,
+    ) -> Result<(), CreateStreamErr> {
+        self.rsn.add(name).map(|name_idx| {
+            let req = DBReq::CreateStream { name_idx, _padding: 0 };
+            file_io.send(req, IOArgs::Create);
+        })
     }
 
-    pub async fn create_stream(&mut self, name: &str) -> Result<(), &str> {
-        let fd = self.file_io.create().await;
-        match self.streams.entry(String::from(name)) {
-            hashbrown::hash_map::Entry::Vacant(entry) => {
-                entry.insert(fd);
-                Ok(())
+    pub fn receive_io(&mut self, db_req: DBReq, ret_val: IORetVal<FD>) {
+        let db_res: DBRes = match (db_req, ret_val) {
+            (DBReq::CreateStream { name_idx, .. }, IORetVal::Create(fd)) => {
+                let name = self.rsn.remove(name_idx);
+
+                match self.streams.entry(name) {
+                    hash_map::Entry::Occupied(_) => {
+                        panic!("Duplicate stream name")
+                    }
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(fd);
+                        let stored_name = entry.key();
+                        DBRes::StreamCreated(stored_name)
+                    }
+                }
             }
-            hashbrown::hash_map::Entry::Occupied(_) => {
-                Err("Stream name already exists")
+            _ => {
+                panic!("Invalid db_req, io_ret_val pair")
             }
-        }
+        };
     }
 }
-*/

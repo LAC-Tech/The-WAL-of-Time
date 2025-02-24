@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use rand::SeedableRng;
-use rust::FileIO;
+use rand::seq::SliceRandom;
+
+use rust::FileIO; // Matches crate name "rust"
 
 // Configuration parameters for the DST
 // In one place for ease of tweaking
@@ -23,32 +23,32 @@ mod config {
 }
 
 mod future {
-    use super::FS;
+    use super::Simulator;
     use std::pin::Pin;
     use std::task::{Context, Poll};
 
     pub struct Create<'a> {
         pub delay_steps: u32,
-        pub fs: &'a mut FS,
+        pub sim: &'a mut Simulator,
     }
 
     pub struct Read<'a> {
         pub delay_steps: u32,
-        pub fs: &'a mut FS,
+        pub sim: &'a mut Simulator,
         pub buf: &'a mut Vec<u8>,
         pub offset: usize,
     }
 
     pub struct Append<'a> {
         pub delay_steps: u32,
-        pub fs: &'a mut FS,
+        pub sim: &'a mut Simulator,
         pub fd: usize,
         pub data: Option<Box<[u8]>>,
     }
 
     pub struct Delete<'a> {
         pub delay_steps: u32,
-        pub fs: &'a mut FS,
+        pub sim: &'a mut Simulator,
         pub fd: usize,
     }
 
@@ -70,11 +70,10 @@ mod future {
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
             if waiting(&mut self.delay_steps, cx) {
-                return Poll::Pending
+                return Poll::Pending;
             }
-
-            self.fs.files.push(Some(Vec::new()));
-            Poll::Ready(self.fs.files.len() - 1)
+            self.sim.files.push(Some(Vec::new()));
+            Poll::Ready(self.sim.files.len() - 1)
         }
     }
 
@@ -86,11 +85,10 @@ mod future {
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
             if waiting(&mut self.delay_steps, cx) {
-                return Poll::Pending
+                return Poll::Pending;
             }
-
             let file_data = self
-                .fs
+                .sim
                 .files
                 .get(self.offset)
                 .and_then(|opt| opt.as_ref())
@@ -110,25 +108,21 @@ mod future {
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
             if waiting(&mut self.delay_steps, cx) {
-                return Poll::Pending
+                return Poll::Pending;
             }
-
             let fd = self.fd;
             let data = match self.data.take() {
                 Some(data) => data,
                 None => return Poll::Ready(0),
             };
-
-            if fd >= self.fs.files.len() {
+            if fd >= self.sim.files.len() {
                 return Poll::Ready(0);
             }
-
             let file =
-                match self.fs.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
+                match self.sim.files.get_mut(fd).and_then(|opt| opt.as_mut()) {
                     Some(file) => file,
                     None => return Poll::Ready(0),
                 };
-
             file.extend_from_slice(&data);
             Poll::Ready(data.len())
         }
@@ -142,35 +136,105 @@ mod future {
             cx: &mut Context<'_>,
         ) -> Poll<Self::Output> {
             if waiting(&mut self.delay_steps, cx) {
-                return Poll::Pending
+                return Poll::Pending;
             }
-
-            let fd = self.fd; // avoids borrow
-            let success = self.fs.files.get_mut(fd).map_or(false, |file_opt| {
-                *file_opt = None;
-                true
-            });
+            let fd = self.fd;
+            let success =
+                self.sim.files.get_mut(fd).map_or(false, |file_opt| {
+                    *file_opt = None;
+                    true
+                });
             Poll::Ready(success)
         }
     }
 }
 
-// An append only file system, support Create, Append, Update, Delete
-struct FS {
+// Random priority to increase "chaos" in simulation
+type Task = Pin<Box<dyn Future<Output = ()>>>;
+
+struct Simulator {
     files: Vec<Option<Vec<u8>>>,
     rng: rand::rngs::SmallRng,
 }
 
-impl FS {
+impl Simulator {
     fn new(seed: u64) -> Self {
-        Self { files: vec![], rng: rand::rngs::SmallRng::seed_from_u64(seed) }
+        Self {
+            files: Vec::new(),
+            rng: rand::rngs::SmallRng::seed_from_u64(seed),
+        }
+    }
+
+    fn create_waker(&self) -> Waker {
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(
+            |data| RawWaker::new(data, &VTABLE),
+            |_| {},
+            |_| {},
+            |_| {},
+        );
+
+        unsafe {
+            Waker::from_raw(RawWaker::new(
+                std::ptr::null::<()>() as *const _,
+                &VTABLE,
+            ))
+        }
+    }
+
+    fn run(&mut self) {
+        let mut tasks: Vec<Task> = Vec::new();
+        let mut fd = None;
+        let mut buf = Vec::new();
+        let mut bytes_written = None;
+        let mut bytes_read = None;
+        let mut success = None;
+
+        tasks.push(Box::pin(async {
+            let result = self.create().await;
+            fd = Some(result);
+            println!("Created file with FD: {}", result);
+        }));
+
+        let data = vec![42, 43, 44].into_boxed_slice();
+        tasks.push(Box::pin(async {
+            let result = self.append(fd.unwrap_or(0), data).await;
+            bytes_written = Some(result);
+            println!("Appended {} bytes", result);
+        }));
+
+        tasks.push(Box::pin(async {
+            let result = self.read(&mut buf, fd.unwrap_or(0)).await;
+            bytes_read = Some(result);
+            println!("Read {} bytes: {:?}", result, buf);
+        }));
+
+        tasks.push(Box::pin(async {
+            let result = self.delete(fd.unwrap_or(0)).await;
+            success = Some(result);
+            println!("Deleted FD {}: {}", fd.unwrap_or(0), result);
+        }));
+
+        let waker = self.create_waker();
+        let mut context = Context::from_waker(&waker);
+
+        while !tasks.is_empty() {
+            let mut new_tasks = Vec::new();
+            for mut task in tasks.drain(..) {
+                match task.as_mut().poll(&mut context) {
+                    Poll::Pending => new_tasks.push(task),
+                    Poll::Ready(()) => {}
+                }
+            }
+            tasks = new_tasks;
+            tasks.shuffle(&mut self.rng); // Chaos via random polling
+        }
     }
 }
 
-impl FileIO<usize> for FS {
+impl FileIO<usize> for Simulator {
     fn create(&mut self) -> impl Future<Output = usize> + '_ {
         let delay_steps = config::delay_steps(&mut self.rng);
-        future::Create { delay_steps, fs: self }
+        future::Create { delay_steps, sim: self }
     }
 
     fn read<'a>(
@@ -179,7 +243,7 @@ impl FileIO<usize> for FS {
         offset: usize,
     ) -> impl Future<Output = usize> + 'a {
         let delay_steps = config::delay_steps(&mut self.rng);
-        future::Read { delay_steps, fs: self, buf, offset }
+        future::Read { delay_steps, sim: self, buf, offset }
     }
 
     fn append(
@@ -188,111 +252,16 @@ impl FileIO<usize> for FS {
         data: Box<[u8]>,
     ) -> impl Future<Output = usize> + '_ {
         let delay_steps = config::delay_steps(&mut self.rng);
-        future::Append { delay_steps, fs: self, fd, data: Some(data) }
+        future::Append { delay_steps, sim: self, fd, data: Some(data) }
     }
 
     fn delete(&mut self, fd: usize) -> impl Future<Output = bool> + '_ {
         let delay_steps = config::delay_steps(&mut self.rng);
-        future::Delete { delay_steps, fs: self, fd }
+        future::Delete { delay_steps, sim: self, fd }
     }
-}
-
-// Random priority to increase "chaos" in simulation
-struct Task {
-    priority: u32,
-    future: Pin<Box<dyn Future<Output = ()> + 'static>>,
-}
-
-impl PartialEq for Task {
-    fn eq(&self, other: &Self) -> bool { self.priority == other.priority }
-}
-
-impl Eq for Task {}
-
-impl PartialOrd for Task {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Task {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.priority.cmp(&other.priority)
-    }
-}
-
-// Single threaded, deterministic async runtime
-struct Runtime {
-    tasks: BinaryHeap<Task>,
-    waker: Option<Waker>,
-}
-
-impl Runtime {
-    fn new() -> Self { Runtime { tasks: BinaryHeap::new(), waker: None } }
-
-    fn create_waker(&mut self) -> Waker {
-        fn clone(data: *const ()) -> RawWaker { RawWaker::new(data, &VTABLE) }
-        fn wake(_data: *const ()) {} // No-op, queue handles re-polling
-        fn wake_by_ref(_data: *const ()) {}
-        fn drop(_data: *const ()) {}
-
-        static VTABLE: RawWakerVTable =
-            RawWakerVTable::new(clone, wake, wake_by_ref, drop);
-
-        self.waker
-            .get_or_insert_with(|| unsafe {
-                Waker::from_raw(RawWaker::new(
-                    std::ptr::null::<()>() as *const _,
-                    &VTABLE,
-                ))
-            })
-            .clone()
-    }
-
-    fn spawn(
-        &mut self,
-        rng: &mut impl rand::Rng,
-        future: impl Future<Output = ()> + 'static,
-    ) {
-        let t =
-            Task { priority: rng.random::<u32>(), future: Box::pin(future) };
-        self.tasks.push(t);
-    }
-
-    fn run(&mut self) {
-        while !self.tasks.is_empty() {
-            // Poll one task per iteration to avoid overlapping borrows
-            if let Some(mut task) = self.tasks.pop() {
-                let waker = self.create_waker();
-                let mut context = Context::from_waker(&waker);
-                match task.future.as_mut().poll(&mut context) {
-                    Poll::Pending => self.tasks.push(task),
-                    Poll::Ready(()) => {}
-                }
-            }
-        }
-    }
-}
-
-async fn run_fs(mut fs: FS) {
-    let fd = fs.create().await;
-    println!("Created file with FD: {}", fd);
-
-    let data = vec![42, 43, 44].into_boxed_slice();
-    let bytes_written = fs.append(fd, data).await;
-    println!("Appended {} bytes", bytes_written);
-
-    let mut buf = Vec::new();
-    let bytes_read = fs.read(&mut buf, fd).await;
-    println!("Read {} bytes: {:?}", bytes_read, buf);
-
-    let success = fs.delete(fd).await;
-    println!("Deleted FD {}: {}", fd, success);
 }
 
 fn main() {
-    let mut runtime = Runtime::new();
-    let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
-    runtime.spawn(&mut rng, run_fs(FS::new(42)));
-    runtime.run();
+    let mut sim = Simulator::new(42);
+    sim.run();
 }

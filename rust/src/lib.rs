@@ -2,7 +2,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::string::String;
 use alloc::vec::Vec;
 use foldhash::fast::FixedState;
 use hashbrown::{HashMap, HashSet, hash_map, hash_set};
@@ -25,7 +24,7 @@ pub enum IORetVal<FD> {
 
 pub trait FileIO {
     type FD;
-    fn send(&mut self, req_id: DBReq, args: IOArgs<Self::FD>);
+    fn send(&mut self, req: DBReq, io_args: IOArgs<Self::FD>);
 }
 
 /// Requests: user -> node #[repr(u8)]
@@ -40,20 +39,20 @@ const _: () = {
 };
 
 /// Response: node -> user
-enum DBRes<'a> {
+pub enum DBRes<'a> {
     StreamCreated(&'a str),
 }
 
 /// Streams that are waiting to be created
 #[derive(Default)]
-struct RequestedStreamNames {
-    names: Vec<String>, // TODO: just use flat array of 256 elems?
+struct RequestedStreamNames<'a> {
+    names: Vec<&'a str>, // TODO: just use flat array of 256 elems?
     free_indices: Vec<u8>,
 }
 
-impl RequestedStreamNames {
+impl<'a> RequestedStreamNames<'a> {
     /// Index if it succeeds, None if it's a duplicate
-    fn add(&mut self, name: String) -> Result<u8, CreateStreamErr> {
+    fn add(&mut self, name: &'a str) -> Result<u8, CreateStreamErr> {
         if self.names.contains(&name) {
             return Err(CreateStreamErr::DuplicateName)
         }
@@ -71,19 +70,17 @@ impl RequestedStreamNames {
         Ok(index)
     }
 
-    fn remove(&mut self, index: u8) -> String {
+    fn remove(&mut self, index: u8) -> &'a str {
         self.free_indices.push(index);
-        let removed =
-            core::mem::replace(&mut self.names[index as usize], String::new());
+        let removed = core::mem::replace(&mut self.names[index as usize], "");
         self.free_indices.push(index as u8); // Mark slot as free
         removed
     }
 }
 
-pub struct DB<FD, R> {
-    rsn: RequestedStreamNames,
-    receiver: R,
-    streams: HashMap<String, FD, FixedState>,
+pub struct DB<'a, FD> {
+    rsn: RequestedStreamNames<'a>,
+    streams: HashMap<&'a str, FD, FixedState>,
 }
 
 pub enum CreateStreamErr {
@@ -91,10 +88,16 @@ pub enum CreateStreamErr {
     ReservationLimitExceeded,
 }
 
-impl<FD, R: FnMut(DBRes)> DB<FD, R> {
+impl<'a, FD> DB<'a, FD> {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rsn: RequestedStreamNames::default(),
+            streams: HashMap::with_hasher(FixedState::with_seed(seed)),
+        }
+    }
     pub fn create_stream(
         &mut self,
-        name: String,
+        name: &'a str,
         file_io: &mut impl FileIO<FD = FD>,
     ) -> Result<(), CreateStreamErr> {
         self.rsn.add(name).map(|name_idx| {
@@ -103,7 +106,12 @@ impl<FD, R: FnMut(DBRes)> DB<FD, R> {
         })
     }
 
-    pub fn receive_io(&mut self, db_req: DBReq, ret_val: IORetVal<FD>) {
+    pub fn receive_io(
+        &mut self,
+        db_req: DBReq,
+        ret_val: IORetVal<FD>,
+        receiver: &mut impl FnMut(DBRes),
+    ) {
         let db_res: DBRes = match (db_req, ret_val) {
             (DBReq::CreateStream { name_idx, .. }, IORetVal::Create(fd)) => {
                 let name = self.rsn.remove(name_idx);
@@ -114,8 +122,7 @@ impl<FD, R: FnMut(DBRes)> DB<FD, R> {
                     }
                     hash_map::Entry::Vacant(entry) => {
                         entry.insert(fd);
-                        let stored_name = entry.key();
-                        DBRes::StreamCreated(stored_name)
+                        DBRes::StreamCreated(name)
                     }
                 }
             }
@@ -123,5 +130,13 @@ impl<FD, R: FnMut(DBRes)> DB<FD, R> {
                 panic!("Invalid db_req, io_ret_val pair")
             }
         };
+
+        receiver(db_res)
     }
+}
+
+pub struct Env<'a, F: FileIO, R: FnMut(DBRes)> {
+    db: DB<'a, F::FD>,
+    file_io: F,
+    receiver: R,
 }

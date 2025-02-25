@@ -23,7 +23,7 @@ pub enum IOReq<FD> {
 
 /// Response: node -> user
 pub enum IORes<FD> {
-    Create { fd: FD, user_data: user_data::Create },
+    Create(FD, user_data::Create),
     Read(usize),
     Append(usize),
     Delete(bool),
@@ -118,21 +118,22 @@ impl<'a, FD> DB<'a, FD> {
 
     pub fn receive_io(&mut self, res: IORes<FD>, user_ctx: &mut impl UserCtx) {
         let user_res: UserRes = match res {
-            IORes::Create { fd, user_data } => match user_data {
-                user_data::Create::Stream { name_idx, _padding } => {
-                    let name = self.rsn.remove(name_idx);
+            IORes::Create(
+                fd,
+                user_data::Create::Stream { name_idx, _padding },
+            ) => {
+                let name = self.rsn.remove(name_idx);
 
-                    match self.streams.entry(name) {
-                        hash_map::Entry::Occupied(_) => {
-                            panic!("Duplicate stream name: {}", name)
-                        }
-                        hash_map::Entry::Vacant(entry) => {
-                            entry.insert(fd);
-                            UserRes::StreamCreated(name)
-                        }
+                match self.streams.entry(name) {
+                    hash_map::Entry::Occupied(_) => {
+                        panic!("Duplicate stream name: {}", name)
+                    }
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(fd);
+                        UserRes::StreamCreated(name)
                     }
                 }
-            },
+            }
             _ => {
                 panic!("TODO: handle more io requests");
             }

@@ -1,5 +1,6 @@
 #![no_std]
-#![feature(vec_push_within_capacity)]
+
+#[macro_use]
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -7,7 +8,10 @@ use alloc::vec::Vec;
 use core::mem;
 
 use foldhash::fast::FixedState;
-use hashbrown::{HashMap, hash_map};
+use hashbrown::HashMap;
+
+// Only worrying about 64 bit systems for now
+const _: () = assert!(mem::size_of::<usize>() == 8);
 
 pub trait FileIO {
     type FD;
@@ -16,7 +20,7 @@ pub trait FileIO {
 
 /// Requests: user -> node #[repr(u8)]
 pub enum IOReq<FD> {
-    Create(usr_data::Create),
+    Create(db_ctx::Create),
     Read { buf: Vec<u8>, offset: usize },
     Append { fd: FD, data: Box<[u8]> },
     Delete(FD),
@@ -24,25 +28,31 @@ pub enum IOReq<FD> {
 
 /// Response: node -> user
 pub enum IORes<FD> {
-    Create(FD, usr_data::Create),
+    Create(FD, db_ctx::Create),
     Read(usize),
     Append(usize),
     Delete(bool),
 }
 
+/// User Response
 #[derive(Debug)]
-pub enum UsrRes<'a> {
+pub enum URes<'a> {
     StreamCreated(&'a str),
 }
 
-// 64 bit pieces of user data to help DB figure out what an IO req was for
-mod usr_data {
+/// Database Context
+/// Small bits of data so the DB knows what an IO req was for when it gets the
+/// response back
+mod db_ctx {
     use core::mem::size_of;
     #[repr(u8)]
     pub enum Create {
         Stream { name_idx: u8, _padding: u32 },
     }
 
+    // These are intended to be used in the user_data field of io_uring (__u64),
+    // or the udata field of kqueue (void*). So we make sure they can fit in
+    // 8 bytes.
     const _: () = {
         assert!(size_of::<Create>() == 8);
     };
@@ -50,13 +60,18 @@ mod usr_data {
 
 /// Streams that are waiting to be created
 struct RequestedStreamNames<'a> {
-    names: Vec<&'a str>, // TODO: just use flat array of 256 elems?
-    free_indices: Vec<u8>,
+    /// Using an array so we can give each name a small "address"
+    /// Limit the size of it 256 bytes so we can use a u8 as the index
+    names: Box<[&'a str; 256]>,
+    /// Allows us to remove names from the middle of the names array w/o
+    /// re-ordering. If this array is empty, we've exceeded the capacity of
+    /// names
+    next_indices: Vec<u8>,
 }
 
 impl<'a> RequestedStreamNames<'a> {
     fn new() -> Self {
-        Self { names: Vec::with_capacity(256), free_indices: Vec::new() }
+        Self { names: Box::new([""; 256]), next_indices: vec![0] }
     }
     /// Index if it succeeds, None if it's a duplicate
     fn add(&mut self, name: &'a str) -> Result<u8, CreateStreamErr> {
@@ -64,22 +79,22 @@ impl<'a> RequestedStreamNames<'a> {
             return Err(CreateStreamErr::DuplicateName)
         }
 
-        if let Some(index) = self.free_indices.pop() {
-            self.names[index as usize] = name;
-            return Ok(index);
-        }
+        let Some(idx) = self.next_indices.pop() else {
+            return Err(CreateStreamErr::ReservationLimitExceeded);
+        };
 
-        self.names
-            .push_within_capacity(name)
-            .map_err(|_| CreateStreamErr::ReservationLimitExceeded)?;
-        Ok((self.names.len() - 1).try_into().unwrap())
+        self.names[idx as usize] = name;
+
+        // We can add the next name after this; unless we've reached the
+        // capacity of names
+        idx.checked_add(1).map(|idx| self.next_indices.push(idx));
+
+        Ok(idx)
     }
 
     fn remove(&mut self, index: u8) -> &'a str {
-        self.free_indices.push(index);
-        let removed = mem::take(&mut self.names[index as usize]);
-        self.free_indices.push(index); // Mark slot as free
-        removed
+        self.next_indices.push(index);
+        mem::take(&mut self.names[index as usize])
     }
 }
 
@@ -90,11 +105,12 @@ pub enum CreateStreamErr {
 }
 
 pub trait UserCtx {
-    fn send(&mut self, res: UsrRes<'_>);
+    fn send(&mut self, res: URes<'_>);
 }
 
 pub struct DB<'a, FD> {
     rsn: RequestedStreamNames<'a>,
+    /// Determistic Hashmap for testing
     streams: HashMap<&'a str, FD, FixedState>,
 }
 
@@ -112,29 +128,23 @@ impl<'a, FD> DB<'a, FD> {
         file_io: &mut impl FileIO<FD = FD>,
     ) -> Result<(), CreateStreamErr> {
         self.rsn.add(name).map(|name_idx| {
-            let usr_data = usr_data::Create::Stream { name_idx, _padding: 0 };
+            let usr_data = db_ctx::Create::Stream { name_idx, _padding: 0 };
             file_io.send(IOReq::Create(usr_data));
         })
     }
 
     pub fn receive_io(&mut self, res: IORes<FD>, usr_ctx: &mut impl UserCtx) {
-        let usr_res: UsrRes = match res {
+        let usr_res: URes = match res {
             IORes::Create(
                 fd,
-                usr_data::Create::Stream { name_idx, _padding },
+                db_ctx::Create::Stream { name_idx, _padding },
             ) => {
                 let name = self.rsn.remove(name_idx);
-
-                match self.streams.entry(name) {
-                    hash_map::Entry::Occupied(_) => {
-                        panic!("Duplicate stream name: {}", name)
-                    }
-                    hash_map::Entry::Vacant(entry) => {
-                        entry.insert(fd);
-                        UsrRes::StreamCreated(name)
-                    }
-                }
+                let prev_val = self.streams.insert(name, fd);
+                assert!(prev_val.is_none(), "Duplicate Stream Name :{}", name);
+                URes::StreamCreated(name)
             }
+
             _ => {
                 panic!("TODO: handle more io requests");
             }

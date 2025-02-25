@@ -77,7 +77,7 @@ impl<'a> RequestedStreamNames<'a> {
     fn remove(&mut self, index: u8) -> &'a str {
         self.free_indices.push(index);
         let removed = mem::take(&mut self.names[index as usize]);
-        self.free_indices.push(index as u8); // Mark slot as free
+        self.free_indices.push(index); // Mark slot as free
         removed
     }
 }
@@ -89,7 +89,7 @@ pub enum CreateStreamErr {
 }
 
 pub trait UserCtx {
-    fn send<'a>(&mut self, res: UserRes<'a>);
+    fn send(&mut self, res: UserRes<'_>);
 }
 
 pub struct DB<'a, FD> {

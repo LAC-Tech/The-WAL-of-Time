@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(vec_push_within_capacity)]
 extern crate alloc;
 
 use alloc::boxed::Box;
@@ -15,7 +16,7 @@ pub trait FileIO {
 
 /// Requests: user -> node #[repr(u8)]
 pub enum IOReq<FD> {
-    Create(user_data::Create),
+    Create(usr_data::Create),
     Read { buf: Vec<u8>, offset: usize },
     Append { fd: FD, data: Box<[u8]> },
     Delete(FD),
@@ -23,19 +24,19 @@ pub enum IOReq<FD> {
 
 /// Response: node -> user
 pub enum IORes<FD> {
-    Create(FD, user_data::Create),
+    Create(FD, usr_data::Create),
     Read(usize),
     Append(usize),
     Delete(bool),
 }
 
 #[derive(Debug)]
-pub enum UserRes<'a> {
+pub enum UsrRes<'a> {
     StreamCreated(&'a str),
 }
 
 // 64 bit pieces of user data to help DB figure out what an IO req was for
-mod user_data {
+mod usr_data {
     use core::mem::size_of;
     #[repr(u8)]
     pub enum Create {
@@ -48,30 +49,30 @@ mod user_data {
 }
 
 /// Streams that are waiting to be created
-#[derive(Default)]
 struct RequestedStreamNames<'a> {
     names: Vec<&'a str>, // TODO: just use flat array of 256 elems?
     free_indices: Vec<u8>,
 }
 
 impl<'a> RequestedStreamNames<'a> {
+    fn new() -> Self {
+        Self { names: Vec::with_capacity(256), free_indices: Vec::new() }
+    }
     /// Index if it succeeds, None if it's a duplicate
     fn add(&mut self, name: &'a str) -> Result<u8, CreateStreamErr> {
         if self.names.contains(&name) {
             return Err(CreateStreamErr::DuplicateName)
         }
-        let index = if let Some(index) = self.free_indices.pop() {
-            self.names[index as usize] = name;
-            index
-        } else {
-            if self.names.len() >= 256 {
-                return Err(CreateStreamErr::ReservationLimitExceeded)
-            }
-            self.names.push(name);
-            (self.names.len() - 1).try_into().unwrap()
-        };
 
-        Ok(index)
+        if let Some(index) = self.free_indices.pop() {
+            self.names[index as usize] = name;
+            return Ok(index);
+        }
+
+        self.names
+            .push_within_capacity(name)
+            .map_err(|_| CreateStreamErr::ReservationLimitExceeded)?;
+        Ok((self.names.len() - 1).try_into().unwrap())
     }
 
     fn remove(&mut self, index: u8) -> &'a str {
@@ -89,7 +90,7 @@ pub enum CreateStreamErr {
 }
 
 pub trait UserCtx {
-    fn send(&mut self, res: UserRes<'_>);
+    fn send(&mut self, res: UsrRes<'_>);
 }
 
 pub struct DB<'a, FD> {
@@ -100,7 +101,7 @@ pub struct DB<'a, FD> {
 impl<'a, FD> DB<'a, FD> {
     pub fn new(seed: u64) -> Self {
         Self {
-            rsn: RequestedStreamNames::default(),
+            rsn: RequestedStreamNames::new(),
             streams: HashMap::with_hasher(FixedState::with_seed(seed)),
         }
     }
@@ -111,16 +112,16 @@ impl<'a, FD> DB<'a, FD> {
         file_io: &mut impl FileIO<FD = FD>,
     ) -> Result<(), CreateStreamErr> {
         self.rsn.add(name).map(|name_idx| {
-            let user_data = user_data::Create::Stream { name_idx, _padding: 0 };
-            file_io.send(IOReq::Create(user_data));
+            let usr_data = usr_data::Create::Stream { name_idx, _padding: 0 };
+            file_io.send(IOReq::Create(usr_data));
         })
     }
 
-    pub fn receive_io(&mut self, res: IORes<FD>, user_ctx: &mut impl UserCtx) {
-        let user_res: UserRes = match res {
+    pub fn receive_io(&mut self, res: IORes<FD>, usr_ctx: &mut impl UserCtx) {
+        let usr_res: UsrRes = match res {
             IORes::Create(
                 fd,
-                user_data::Create::Stream { name_idx, _padding },
+                usr_data::Create::Stream { name_idx, _padding },
             ) => {
                 let name = self.rsn.remove(name_idx);
 
@@ -130,7 +131,7 @@ impl<'a, FD> DB<'a, FD> {
                     }
                     hash_map::Entry::Vacant(entry) => {
                         entry.insert(fd);
-                        UserRes::StreamCreated(name)
+                        UsrRes::StreamCreated(name)
                     }
                 }
             }
@@ -139,6 +140,6 @@ impl<'a, FD> DB<'a, FD> {
             }
         };
 
-        user_ctx.send(user_res);
+        usr_ctx.send(usr_res);
     }
 }

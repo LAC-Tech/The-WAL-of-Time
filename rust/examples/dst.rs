@@ -56,11 +56,11 @@ impl QueueOS {
     fn tick(&mut self, db: &mut DB<FD>, user_ctx: &mut UserCtx) {
         let Some(e) = self.events.pop() else { return };
         let res = match e.req {
-            IOReq::Create(user_data) => {
+            IOReq::C(user_data) => {
                 self.files.push(vec![]);
                 let fd = self.files.len() - 1;
                 self.stats.files_created += 1;
-                IORes::Create { fd, user_data }
+                IORes::C { fd, user_data }
             }
             _ => panic!("TODO: handle more events"),
         };

@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 
 use rand::prelude::*;
 
-use rust::{DB, FileIO, IOReq, IORes, UserRes};
+use rust::{DB, FileIO, IOReq, IORes, URes};
 
 type FD = usize;
 
@@ -56,11 +56,11 @@ impl QueueOS {
     fn tick(&mut self, db: &mut DB<FD>, user_ctx: &mut UserCtx) {
         let Some(e) = self.events.pop() else { return };
         let res = match e.req {
-            IOReq::C(user_data) => {
+            IOReq::Create(user_data) => {
                 self.files.push(vec![]);
                 let fd = self.files.len() - 1;
                 self.stats.files_created += 1;
-                IORes::C { fd, user_data }
+                IORes::Create(fd, user_data)
             }
             _ => panic!("TODO: handle more events"),
         };
@@ -81,8 +81,36 @@ impl FileIO for QueueOS {
 struct UserCtx {}
 
 impl rust::UserCtx for UserCtx {
-    fn send<'a>(&mut self, res: UserRes<'a>) {
+    fn send<'a>(&mut self, res: URes<'a>) {
         println!("DB Response {:?} received", res)
+    }
+}
+
+struct RandStreamNameGenerator {
+    str: &'static [u8],
+    idx: usize,
+}
+
+impl RandStreamNameGenerator {
+    fn new(rng: &mut impl Rng) -> Self {
+        let str: Box<[u8]> = (0..config::MAX_BYTES_STREAM_NAMES_SRC)
+            .map(|_| rng.random::<u8>())
+            .collect();
+        let str = Box::leak(str);
+        Self { str, idx: 0 }
+    }
+
+    fn get(&mut self, rng: &mut impl Rng) -> Option<&'static [u8]> {
+        if self.idx >= self.str.len() {
+            return None;
+        }
+        let remaining = self.str.len() - self.idx;
+        let len =
+            rng.random_range(0..=remaining.min(config::MAX_STREAM_NAME_LEN));
+        let end = self.idx + len;
+        let res = &self.str[self.idx..end];
+        self.idx = end;
+        Some(res)
     }
 }
 
@@ -92,6 +120,8 @@ mod config {
     pub const MAX_TIME_IN_MS: u64 = 1000 * 60 * 60 * 24; // 24 hours,
     pub const CREATE_STREAM_CHANCE: f64 = 0.01;
     pub const ADVANCE_OS_CHANCE: f64 = 0.1;
+    pub const MAX_STREAM_NAME_LEN: usize = 64;
+    pub const MAX_BYTES_STREAM_NAMES_SRC: usize = 1024;
 }
 
 struct Simulator<'a> {
@@ -99,21 +129,25 @@ struct Simulator<'a> {
     user_ctx: UserCtx,
     db: DB<'a, FD>,
     os: QueueOS,
+    rsng: RandStreamNameGenerator,
 }
 
 impl<'a> Simulator<'a> {
     fn new(seed: u64) -> Self {
-        let rng = rand::rngs::SmallRng::seed_from_u64(seed);
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
         let user_ctx = UserCtx {};
         let db = DB::new(seed);
         let os = QueueOS::new(seed);
+        let rsng = RandStreamNameGenerator::new(&mut rng);
 
-        Self { rng, user_ctx, os, db }
+        Self { rng, user_ctx, os, db, rsng }
     }
 
     fn tick(&mut self) {
         if config::CREATE_STREAM_CHANCE > self.rng.random() {
-            self.db.create_stream(self.rng.random(), &mut self.os).unwrap();
+            if let Some(s) = self.rsng.get(&mut self.rng) {
+                self.db.create_stream(s, &mut self.os).unwrap();
+            }
         }
         if config::ADVANCE_OS_CHANCE > self.rng.random() {
             self.os.tick(&mut self.db, &mut self.user_ctx);
@@ -122,7 +156,7 @@ impl<'a> Simulator<'a> {
 }
 
 fn bg_simulation(sim: &mut Simulator) {
-    for time in (0..=config::MAX_TIME_IN_MS).step_by(10) {
+    for _time_in_ms in (0..=config::MAX_TIME_IN_MS).step_by(10) {
         sim.tick();
     }
 
@@ -130,7 +164,12 @@ fn bg_simulation(sim: &mut Simulator) {
 }
 
 fn main() {
-    println!("Deterministic simulation tester");
-    let mut sim = Simulator::new(0);
+    let seed: u64 = std::env::args()
+        .nth(2)
+        .map(|s| s.parse().unwrap())
+        .unwrap_or_else(|| rand::random());
+    println!("Deterministic Simulation Tester");
+    println!("Seed = {}", seed);
+    let mut sim = Simulator::new(seed);
     bg_simulation(&mut sim);
 }

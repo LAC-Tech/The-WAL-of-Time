@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem;
 
@@ -37,7 +38,7 @@ pub enum IORes<FD> {
 /// User Response
 #[derive(Debug)]
 pub enum URes<'a> {
-    StreamCreated(&'a str),
+    StreamCreated { name: &'a [u8] },
 }
 
 /// Database Context
@@ -62,39 +63,40 @@ mod db_ctx {
 struct RequestedStreamNames<'a> {
     /// Using an array so we can give each name a small "address"
     /// Limit the size of it 256 bytes so we can use a u8 as the index
-    names: Box<[&'a str; 256]>,
+    names: Box<[&'a [u8]; 64]>,
+    /// Bitmask where 1 = next_index, 0 = not available
     /// Allows us to remove names from the middle of the names array w/o
     /// re-ordering. If this array is empty, we've exceeded the capacity of
     /// names
-    next_indices: Vec<u8>,
+    used_slots: u64,
 }
 
 impl<'a> RequestedStreamNames<'a> {
-    fn new() -> Self {
-        Self { names: Box::new([""; 256]), next_indices: vec![0] }
-    }
+    fn new() -> Self { Self { names: Box::new([b""; 64]), used_slots: 0 } }
+
     /// Index if it succeeds, None if it's a duplicate
-    fn add(&mut self, name: &'a str) -> Result<u8, CreateStreamErr> {
+    fn add(&mut self, name: &'a [u8]) -> Result<u8, CreateStreamErr> {
         if self.names.contains(&name) {
             return Err(CreateStreamErr::DuplicateName)
         }
 
-        let Some(idx) = self.next_indices.pop() else {
+        // Find first free slot
+        let idx = self.used_slots.trailing_ones() as u8;
+        if idx >= 64 {
             return Err(CreateStreamErr::ReservationLimitExceeded);
-        };
+        }
 
+        // Mark slot as used
+        self.used_slots |= 1u64 << idx;
         self.names[idx as usize] = name;
-
-        // We can add the next name after this; unless we've reached the
-        // capacity of names
-        idx.checked_add(1).map(|idx| self.next_indices.push(idx));
 
         Ok(idx)
     }
 
-    fn remove(&mut self, index: u8) -> &'a str {
-        self.next_indices.push(index);
-        mem::take(&mut self.names[index as usize])
+    fn remove(&mut self, index: u8) -> &'a [u8] {
+        assert!(index < 64, "Index out of bounds");
+        self.used_slots &= !(1u64 << index);
+        core::mem::take(&mut self.names[index as usize])
     }
 }
 
@@ -111,7 +113,7 @@ pub trait UserCtx {
 pub struct DB<'a, FD> {
     rsn: RequestedStreamNames<'a>,
     /// Determistic Hashmap for testing
-    streams: HashMap<&'a str, FD, FixedState>,
+    streams: HashMap<&'a [u8], FD, FixedState>,
 }
 
 impl<'a, FD> DB<'a, FD> {
@@ -121,28 +123,35 @@ impl<'a, FD> DB<'a, FD> {
             streams: HashMap::with_hasher(FixedState::with_seed(seed)),
         }
     }
-
+    /// The stream name is raw bytes; focusing on linux first, and ext4
+    /// filenames are bytes, not a particular encoding.
+    /// TODO: some way of translating this into the the platforms native
+    /// filename format ie utf-8 for OS X, utf-16 for windows
     pub fn create_stream(
         &mut self,
-        name: &'a str,
+        name: &'a [u8],
         file_io: &mut impl FileIO<FD = FD>,
     ) -> Result<(), CreateStreamErr> {
-        self.rsn.add(name).map(|name_idx| {
-            let usr_data = db_ctx::Create::Stream { name_idx, _padding: 0 };
-            file_io.send(IOReq::Create(usr_data));
-        })
+        let name_idx = self.rsn.add(name)?;
+        let usr_data = db_ctx::Create::Stream { name_idx, _padding: 0 };
+        file_io.send(IOReq::Create(usr_data));
+        Ok(())
     }
 
     pub fn receive_io(&mut self, res: IORes<FD>, usr_ctx: &mut impl UserCtx) {
-        let usr_res: URes = match res {
+        let usr_res = match res {
             IORes::Create(
                 fd,
                 db_ctx::Create::Stream { name_idx, _padding },
             ) => {
                 let name = self.rsn.remove(name_idx);
                 let prev_val = self.streams.insert(name, fd);
-                assert!(prev_val.is_none(), "Duplicate Stream Name :{}", name);
-                URes::StreamCreated(name)
+                assert!(
+                    prev_val.is_none(),
+                    "Duplicate Stream Name :{}",
+                    String::from_utf8_lossy(name)
+                );
+                URes::StreamCreated { name }
             }
 
             _ => {

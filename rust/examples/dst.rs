@@ -1,88 +1,121 @@
-#![feature(unboxed_closures)]
-#![feature(fn_traits)]
-use std::collections::BinaryHeap;
-
 use rand::prelude::*;
 
-use rust::{DB, FileIO, IOReq, IORes, URes};
+use rust::DB;
 
-type FD = usize;
+mod os {
+    use super::usr;
+    use rand::prelude::*;
+    use rust::{DB, FileIO, IOReq, IORes};
+    use std::collections::BinaryHeap;
 
-struct Event {
-    priority: u64,
-    req: IOReq<FD>,
-}
-
-impl PartialEq for Event {
-    fn eq(&self, other: &Self) -> bool { self.priority == other.priority }
-}
-impl Eq for Event {}
-impl PartialOrd for Event {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.priority.cmp(&other.priority))
+    pub type FD = usize;
+    struct Event {
+        priority: u64,
+        req: IOReq<FD>,
     }
-}
-
-impl Ord for Event {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority.cmp(&other.priority)
+    impl PartialEq for Event {
+        fn eq(&self, other: &Self) -> bool { self.priority == other.priority }
     }
-}
-
-#[derive(Debug, Default)]
-struct OSStats {
-    files_created: u64,
-}
-
-struct QueueOS {
-    events: BinaryHeap<Event>,
-    files: Vec<Vec<u8>>,
-    rng: SmallRng,
-    stats: OSStats,
-}
-
-impl QueueOS {
-    fn new(seed: u64) -> Self {
-        Self {
-            events: BinaryHeap::new(),
-            files: vec![],
-            rng: SmallRng::seed_from_u64(seed),
-            stats: OSStats::default(),
+    impl Eq for Event {}
+    impl PartialOrd for Event {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.priority.cmp(&other.priority))
         }
     }
 
-    // Advances the state of the OS.
-    // Should not happen every sim tick, I don't think
-    fn tick(&mut self, db: &mut DB<FD>, user_ctx: &mut UserCtx) {
-        let Some(e) = self.events.pop() else { return };
-        let res = match e.req {
-            IOReq::Create(user_data) => {
-                self.files.push(vec![]);
-                let fd = self.files.len() - 1;
-                self.stats.files_created += 1;
-                IORes::Create(fd, user_data)
+    impl Ord for Event {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.priority.cmp(&other.priority)
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Stats {
+        files_created: u64,
+    }
+    pub struct OS {
+        events: BinaryHeap<Event>,
+        files: Vec<Vec<u8>>,
+        // Needs its own rng so we can confrom to FileIO interface
+        // TODO: make FileIO pass in some arbitrary "context" parameter???
+        rng: SmallRng,
+        pub stats: Stats,
+    }
+
+    impl OS {
+        pub fn new(seed: u64) -> Self {
+            Self {
+                events: BinaryHeap::new(),
+                files: vec![],
+                rng: SmallRng::seed_from_u64(seed),
+                stats: Stats::default(),
             }
-            _ => panic!("TODO: handle more events"),
-        };
+        }
 
-        db.receive_io(res, user_ctx);
+        // Advances the state of the OS.
+        // Should not happen every sim tick, I don't think
+        pub fn tick(&mut self, db: &mut DB<FD>, usr_ctx: &mut usr::Ctx) {
+            let Some(e) = self.events.pop() else { return };
+            let res = match e.req {
+                IOReq::Create(user_data) => {
+                    self.files.push(vec![]);
+                    let fd = self.files.len() - 1;
+                    self.stats.files_created += 1;
+                    IORes::Create(fd, user_data)
+                }
+                _ => panic!("TODO: handle more events"),
+            };
+
+            db.receive_io(res, usr_ctx);
+        }
+    }
+
+    impl FileIO for OS {
+        type FD = FD;
+        fn send(&mut self, req: IOReq<FD>) {
+            let priority: u64 = self.rng.random();
+            let e = Event { priority, req };
+            self.events.push(e);
+        }
     }
 }
 
-impl FileIO for QueueOS {
-    type FD = FD;
-    fn send(&mut self, req: IOReq<FD>) {
-        let priority: u64 = self.rng.random();
-        let e = Event { priority, req };
-        self.events.push(e);
+mod usr {
+    use rust::{CreateStreamErr, UserCtx};
+
+    #[derive(Default)]
+    pub struct Ctx {
+        pub stats: Stats,
     }
-}
 
-struct UserCtx {}
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Stats {
+        streams_created: u64,
+        stream_name_duplicates: u64,
+        stream_name_reservation_limit_exceeded: u64,
+    }
 
-impl rust::UserCtx for UserCtx {
-    fn send<'a>(&mut self, res: URes<'a>) {
-        println!("DB Response {:?} received", res)
+    impl Ctx {
+        pub fn on_stream_create_req_err(&mut self, err: CreateStreamErr) {
+            match err {
+                CreateStreamErr::DuplicateName => {
+                    self.stats.stream_name_duplicates += 1
+                }
+                CreateStreamErr::ReservationLimitExceeded => {
+                    self.stats.stream_name_reservation_limit_exceeded += 1
+                }
+            }
+        }
+    }
+
+    impl UserCtx for Ctx {
+        fn send<'a>(&mut self, res: rust::URes<'a>) {
+            match res {
+                rust::URes::StreamCreated { .. } => {
+                    self.stats.streams_created += 1
+                }
+            }
+        }
     }
 }
 
@@ -126,32 +159,38 @@ mod config {
 
 struct Simulator<'a> {
     rng: SmallRng,
-    user_ctx: UserCtx,
-    db: DB<'a, FD>,
-    os: QueueOS,
+    usr_ctx: usr::Ctx,
+    db: DB<'a, os::FD>,
+    os: os::OS,
     rsng: RandStreamNameGenerator,
 }
 
 impl<'a> Simulator<'a> {
     fn new(seed: u64) -> Self {
         let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
-        let user_ctx = UserCtx {};
+        let user_ctx = usr::Ctx::default();
         let db = DB::new(seed);
-        let os = QueueOS::new(seed);
+        let os = os::OS::new(seed);
         let rsng = RandStreamNameGenerator::new(&mut rng);
 
-        Self { rng, user_ctx, os, db, rsng }
+        Self { rng, usr_ctx: user_ctx, os, db, rsng }
     }
 
     fn tick(&mut self) {
         if config::CREATE_STREAM_CHANCE > self.rng.random() {
             if let Some(s) = self.rsng.get(&mut self.rng) {
-                self.db.create_stream(s, &mut self.os).unwrap();
+                if let Err(err) = self.db.create_stream(s, &mut self.os) {
+                    self.usr_ctx.on_stream_create_req_err(err);
+                }
             }
         }
         if config::ADVANCE_OS_CHANCE > self.rng.random() {
-            self.os.tick(&mut self.db, &mut self.user_ctx);
+            self.os.tick(&mut self.db, &mut self.usr_ctx);
         }
+    }
+
+    fn stats(&self) -> (os::Stats, usr::Stats) {
+        (self.os.stats, self.usr_ctx.stats)
     }
 }
 
@@ -159,8 +198,6 @@ fn bg_simulation(sim: &mut Simulator) {
     for _time_in_ms in (0..=config::MAX_TIME_IN_MS).step_by(10) {
         sim.tick();
     }
-
-    println!("{:?}", sim.os.stats);
 }
 
 fn main() {
@@ -172,4 +209,6 @@ fn main() {
     println!("Seed = {}", seed);
     let mut sim = Simulator::new(seed);
     bg_simulation(&mut sim);
+
+    println!("Stats: {:?}", sim.stats());
 }

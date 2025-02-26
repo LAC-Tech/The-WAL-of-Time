@@ -64,7 +64,7 @@ struct RequestedStreamNames<'a> {
     /// Using an array so we can give each name a small "address"
     /// Limit the size of it 256 bytes so we can use a u8 as the index
     names: Box<[&'a [u8]; 64]>,
-    /// Bitmask where 1 = next_index, 0 = not available
+    /// Bitmask where 1 = occupied, 0 = available
     /// Allows us to remove names from the middle of the names array w/o
     /// re-ordering. If this array is empty, we've exceeded the capacity of
     /// names
@@ -81,7 +81,7 @@ impl<'a> RequestedStreamNames<'a> {
         }
 
         // Find first free slot
-        let idx = self.used_slots.trailing_ones() as u8;
+        let idx = (!self.used_slots).trailing_zeros() as u8;
         if idx >= 64 {
             return Err(CreateStreamErr::ReservationLimitExceeded);
         }

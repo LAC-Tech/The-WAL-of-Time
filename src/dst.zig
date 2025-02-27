@@ -1,23 +1,103 @@
 //! Deterministic Simulation Tester
 
-//const std = @import("std");
-//const heap = std.heap;
-//const math = std.math;
-//const mem = std.mem;
-//const posix = std.posix;
-//const rand = std.rand;
-//const testing = std.testing;
-//
-//const ArrayListUnmanged = std.ArrayListUnmanaged;
-//const AutoHashMap = std.AutoHashMap;
-//const PriorityQueue = std.PriorityQueue;
-//
-//const lib = @import("./root.zig");
-//
-//const c = @cImport({
-//    @cInclude("tui.h");
-//});
-//
+const std = @import("std");
+const heap = std.heap;
+const math = std.math;
+const mem = std.mem;
+const posix = std.posix;
+const rand = std.rand;
+const testing = std.testing;
+
+const ArrayListUnmanged = std.ArrayListUnmanaged;
+const AutoHashMap = std.AutoHashMap;
+const PriorityQueue = std.PriorityQueue;
+
+const lib = @import("./root.zig");
+
+const c = @cImport({
+    @cInclude("tui.h");
+});
+
+const os = struct {
+    const FD = usize;
+    const file_io = lib.file_io(FD);
+    const Event = struct { priority: u64, req: file_io.req };
+
+    fn event_compare(_: void, a: Event, b: Event) math.Order {
+        return math.order(a.priority, b.priority);
+    }
+    const EventQueue = PriorityQueue(Event, void, event_compare);
+    const Stats = struct { file_created: u64 = 0 };
+
+    const OS = struct {
+        events: PriorityQueue(Event, void, event_compare),
+        files: ArrayListUnmanged(ArrayListUnmanged(u8)),
+        // Needs its own rng so we can confrom to FileIO interface
+        // TODO: make FileIO pass in some arbitrary "context" parameter???
+        random: std.Random,
+        stats: Stats,
+
+        pub fn init(allocator: mem.Allocator, random: std.Random) @This() {
+            return .{
+                .events = EventQueue.init(allocator),
+                .files = .{},
+                .random = random,
+                .stats = .{},
+            };
+        }
+
+        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            self.events.deinit(allocator);
+            for (self.files.items) |file| {
+                file.deinit(allocator);
+            }
+            self.files.deinit(allocator);
+        }
+
+        // Advances the state of the OS.
+        // Should not happen every sim tick, I don't think
+        //pub fn tick(self: *@This(), db: lib.DB(FD), usr_ctx: &mut usr::Ctx) {
+        //    let Some(e) = self.events.pop() else { return };
+        //    let res = match e.req {
+        //        IOReq::Create(user_data) => {
+        //            self.files.push(vec![]);
+        //            let fd = self.files.len() - 1;
+        //            self.stats.files_created += 1;
+        //            IORes::Create(fd, user_data)
+        //        }
+        //        _ => panic!("TODO: handle more events"),
+        //    };
+
+        //    db.receive_io(res, usr_ctx);
+        //}
+    };
+};
+
+const usr = struct {
+    const Ctx = struct {
+        stats: Stats,
+
+        pub fn on_stream_create_req_err(
+            self: *@This(),
+            err: lib.CreateStreamReqErr,
+        ) void {
+            switch (err) {
+                error.DuplicateStreamNameRequested => {
+                    self.stats.stream_name_duplicates += 1;
+                },
+                error.RequestedStreamNameOverflow => {
+                    self.stats.stream_name_reservation_limit_exceeded += 1;
+                },
+            }
+        }
+    };
+
+    const Stats = struct {
+        streams_created: u64,
+        stream_name_duplicates: u64,
+        stream_name_reservation_limit_exceeded: u64,
+    };
+};
 //const FileIO = struct {
 //    fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
 //    events: Events,
@@ -76,7 +156,6 @@
 //    }
 //
 //    pub fn send(
-//        self: *@This(),
 //        ctx: *Context,
 //        msg: lib.FileOp(FD).Input,
 //    ) !void {

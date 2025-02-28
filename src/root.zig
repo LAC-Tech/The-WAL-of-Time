@@ -74,7 +74,7 @@ const RequestedStreamNames = struct {
             if (slot == 0) { // Free slot found
                 self.used_slots[i] = 1;
                 self.names[i] = name;
-                return @intCast(i); // Safe cast: i < 64
+                return @intCast(i);
             }
         }
 

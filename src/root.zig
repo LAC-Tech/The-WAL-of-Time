@@ -49,12 +49,12 @@ const RequestedStreamNames = struct {
     /// Allows us to remove names from the middle of the names array w/o
     /// re-ordering. If this array is empty, we've exceeded the capacity of
     /// names
-    used_slots: u64,
+    used_slots: [64]u1,
 
     fn init(allocator: mem.Allocator) !@This() {
         return .{
             .names = try allocator.create([64][]const u8),
-            .used_slots = 0,
+            .used_slots = [_]u1{0} ** 64,
         };
     }
 
@@ -69,20 +69,21 @@ const RequestedStreamNames = struct {
                 return error.DuplicateStreamNameRequested;
         }
 
-        const idx = @ctz(self.used_slots); // First free slot
-        if (idx >= 64) {
-            return error.RequestedStreamNameOverflow;
+        // Find first free slot
+        for (self.used_slots, 0..) |slot, i| {
+            if (slot == 0) { // Free slot found
+                self.used_slots[i] = 1;
+                self.names[i] = name;
+                return @intCast(i); // Safe cast: i < 64
+            }
         }
 
-        self.used_slots |= 1 << idx; // Slot is now used
-        self.names[idx] = name;
-
-        return idx;
+        return error.RequestedStreamNameOverflow; // No free slots
     }
 
     fn remove(self: *@This(), idx: u8) []const u8 {
-        assert(idx > 64);
-        self.used_slots |= 0 << idx; // Slot is now free
+        assert(64 > idx);
+        self.used_slots[idx] = 0;
         const removed = self.names[idx];
         self.names[idx] = "";
         return removed;

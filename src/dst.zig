@@ -46,8 +46,8 @@ const os = struct {
 
         fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.events.deinit();
-            for (self.files.items) |file| {
-                &file.deinit(allocator);
+            for (self.files.items) |*file| {
+                file.deinit(allocator);
             }
             self.files.deinit(allocator);
         }
@@ -161,8 +161,8 @@ const RandStreamNameGenerator = struct {
 // In one place for ease of tweaking
 const config = struct {
     const max_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours,
-    const create_stream_chance: f64 = 0.01;
-    const advance_os_chance: f64 = 0.1;
+    const create_stream_chance: f64 = 0.1;
+    const advance_os_chance: f64 = 0.5;
     const max_stream_name_len: usize = 64;
     const max_bytes_stream_names_src: usize = 1024;
 };

@@ -105,7 +105,7 @@ pub fn DB(comptime FD: type) type {
         streams: StringHashMapUnmanaged(FD),
         allocator: mem.Allocator,
 
-        fn init(allocator: mem.Allocator) @This() {
+        pub fn init(allocator: mem.Allocator) @This() {
             return .{
                 .rsns = RequestedStreamNames.init(allocator),
                 .streams = .{},
@@ -137,30 +137,35 @@ pub fn DB(comptime FD: type) type {
             os.send(file_io_req);
         }
 
+        fn res_file_io_to_usr(
+            self: *@This(),
+            file_io_res: file_io(FD).res,
+        ) URes {
+            switch (file_io_res) {
+                .create => |op| {
+                    switch (op.usr_data) {
+                        .stream => {
+                            const name_idx = op.usr_data.stream.name_idx;
+                            const name = self.rsns.remove(name_idx);
+                            const prev_val = try self.streams.getOrPut(
+                                self.allocator,
+                                name,
+                            );
+                            assert(!prev_val.found_existing);
+                            prev_val.value_ptr.* = op.fd;
+                            return URes{ .stream_created = .{ .name = name } };
+                        },
+                    }
+                },
+            }
+        }
+
         pub fn receive_io(
             self: *@This(),
             res: file_io(FD).res,
             usr_ctx: anytype,
         ) !void {
-            const usr_res = switch (res) {
-                .create => |file_op| {
-                    switch (file_op.usr_data) {
-                        .stream => {
-                            const name_idx = file_op.usr_data.stream.name_idx;
-                            const name = self.rsns.remove(name_idx);
-                            const prev_val = try self.streams.getOrPut(
-                                self.allocator,
-                                name,
-                                file_op.fd,
-                            );
-                            assert(!prev_val.found_existing);
-                            URes{ .stream_created = name };
-                        },
-                    }
-                },
-                else => @panic("TODO: handle more IO requests"),
-            };
-
+            const usr_res = self.res_file_io_to_usr(res);
             usr_ctx.send(usr_res);
         }
     };

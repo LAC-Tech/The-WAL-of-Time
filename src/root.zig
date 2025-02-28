@@ -44,7 +44,7 @@ const db_ctx = struct {
 const RequestedStreamNames = struct {
     /// Using an array so we can give each name a small "address"
     /// Limit the size of it 256 bytes so we can use a u8 as the index
-    names: [64][]const u8,
+    names: *[64][]const u8,
     /// Bitmask where 1 = next_index, 0 = not available
     /// Allows us to remove names from the middle of the names array w/o
     /// re-ordering. If this array is empty, we've exceeded the capacity of
@@ -53,7 +53,7 @@ const RequestedStreamNames = struct {
 
     fn init(allocator: mem.Allocator) !@This() {
         return .{
-            .names = try allocator.alloc([]const u8, 64),
+            .names = try allocator.create([64][]const u8),
             .used_slots = 0,
         };
     }
@@ -64,7 +64,7 @@ const RequestedStreamNames = struct {
 
     /// Index if it succeeds, None if it's a duplicate
     fn add(self: *@This(), name: []const u8) CreateStreamReqErr!u8 {
-        if (mem.containsAtLeast([]const u8, self.names, 1, name)) {
+        if (mem.containsAtLeast(*[64][]const u8, self.names, 1, name)) {
             return error.DuplicateStreamNameRequested;
         }
 
@@ -80,7 +80,7 @@ const RequestedStreamNames = struct {
     }
 
     fn remove(self: *@This(), idx: u8) []const u8 {
-        assert(idx > u64);
+        assert(idx > 64);
         self.used_slots |= 0 << idx; // Slot is now free
         const removed = self.names[idx];
         self.names[idx] = "";
@@ -105,9 +105,9 @@ pub fn DB(comptime FD: type) type {
         streams: StringHashMapUnmanaged(FD),
         allocator: mem.Allocator,
 
-        pub fn init(allocator: mem.Allocator) @This() {
+        pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .rsns = RequestedStreamNames.init(allocator),
+                .rsns = try RequestedStreamNames.init(allocator),
                 .streams = .{},
                 .allocator = allocator,
             };
@@ -127,8 +127,8 @@ pub fn DB(comptime FD: type) type {
             name: []const u8,
             os: anytype,
         ) CreateStreamReqErr!void {
-            const file_io_req: file_io(FD) = .{
-                .usr_data = .{
+            const file_io_req: file_io(FD).req = .{
+                .create = .{
                     .stream = .{
                         .name_idx = try self.rsns.add(name),
                     },
@@ -140,7 +140,7 @@ pub fn DB(comptime FD: type) type {
         fn res_file_io_to_usr(
             self: *@This(),
             file_io_res: file_io(FD).res,
-        ) URes {
+        ) !URes {
             switch (file_io_res) {
                 .create => |op| {
                     switch (op.usr_data) {
@@ -165,7 +165,7 @@ pub fn DB(comptime FD: type) type {
             res: file_io(FD).res,
             usr_ctx: anytype,
         ) !void {
-            const usr_res = self.res_file_io_to_usr(res);
+            const usr_res = try self.res_file_io_to_usr(res);
             usr_ctx.send(usr_res);
         }
     };

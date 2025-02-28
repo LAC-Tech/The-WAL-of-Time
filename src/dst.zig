@@ -35,21 +35,26 @@ const os = struct {
         random: *std.Random,
         stats: Stats,
 
-        pub fn init(allocator: mem.Allocator, random: *std.Random) @This() {
+        fn init(allocator: mem.Allocator, random: *std.Random) @This() {
             return .{
-                .events = EventQueue.init(allocator, event_compare),
+                .events = EventQueue.init(allocator, {}),
                 .files = .{},
                 .random = random,
                 .stats = .{},
             };
         }
 
-        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+        fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.events.deinit(allocator);
             for (self.files.items) |file| {
                 file.deinit(allocator);
             }
             self.files.deinit(allocator);
+        }
+
+        fn send(self: *@This(), req: file_io.req) !void {
+            const e = .{ .priority = self.rng.int(u64), .req = req };
+            try self.events.add(e);
         }
 
         fn handle_req(
@@ -101,6 +106,14 @@ const usr = struct {
                 },
                 error.RequestedStreamNameOverflow => {
                     self.stats.stream_name_reservation_limit_exceeded += 1;
+                },
+            }
+        }
+
+        pub fn send(self: *@This(), res: lib.URes) void {
+            switch (res) {
+                .stream_created => {
+                    self.stats.streams_created += 1;
                 },
             }
         }
@@ -168,14 +181,14 @@ const Simulator = struct {
         return .{
             .rng = rng,
             .usr_ctx = usr.Ctx.init(),
-            .db = DB.init(allocator),
+            .db = try DB.init(allocator),
             .os = os.OS.init(allocator, rng),
             .rsng = try RandStreamNameGenerator.init(allocator, rng),
             .allocator = allocator,
         };
     }
 
-    pub fn deinit(self: *@This()) !@This() {
+    pub fn deinit(self: *@This()) void {
         self.db.deinit(self.allocator);
         os.OS.deinit(self.allocator);
         self.rsng.deinit(self.allocator);
@@ -225,10 +238,7 @@ fn bg_simulation(sim: *Simulator) !void {
     const phys_time_elapsed: f128 =
         @floatFromInt(phys_end_time - phys_start_time);
 
-    std.debug.print(
-        "Stats: OS files created: {}\n",
-        .{sim.ctx.stats.os_files_created},
-    );
+    std.debug.print("Stats: {}\n", .{sim.stats()});
     std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
 }
 

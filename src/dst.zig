@@ -56,20 +56,13 @@ const os = struct {
 
         // Advances the state of the OS.
         // Should not happen every sim tick, I don't think
-        //pub fn tick(self: *@This(), db: lib.DB(FD), usr_ctx: &mut usr::Ctx) {
-        //    let Some(e) = self.events.pop() else { return };
-        //    let res = match e.req {
-        //        IOReq::Create(user_data) => {
-        //            self.files.push(vec![]);
-        //            let fd = self.files.len() - 1;
-        //            self.stats.files_created += 1;
-        //            IORes::Create(fd, user_data)
-        //        }
-        //        _ => panic!("TODO: handle more events"),
-        //    };
+        pub fn tick(self: *@This(), db: lib.DB(FD), usr_ctx: *usr.Ctx) !void {
+            const event = self.events.removeOrNull() orelse return;
+            const res = switch(event.req) {
+            };
 
-        //    db.receive_io(res, usr_ctx);
-        //}
+            db.receive_io(res, usr_ctx);
+        }
     };
 };
 
@@ -97,6 +90,45 @@ const usr = struct {
         stream_name_duplicates: u64,
         stream_name_reservation_limit_exceeded: u64,
     };
+};
+
+const RandStreamNameGenerator = struct {
+    str: []const u8,
+    idx: usize,
+
+    fn init(allocator: mem.Allocator, rng: *std.Random) @This() {
+        var str = try allocator.alloc([]const u8, config.MAX_BYTES_STREAM_NAMES_SRC);
+        rng.fill(self.str);
+        //let str: Box<[u8]> = (0..config::MAX_BYTES_STREAM_NAMES_SRC)
+        //    .map(|_| rng.random::<u8>())
+        //    .collect();
+        //let str = Box::leak(str);
+        //Self { str, idx: 0 }
+    }
+    //fn get(&mut self, rng: &mut impl Rng) -> Option<&'static [u8]> {
+    //    if self.idx >= self.str.len() {
+    //        return None;
+    //    }
+    //    let remaining = self.str.len() - self.idx;
+    //    let len =
+    //        rng.random_range(0..=remaining.min(config::MAX_STREAM_NAME_LEN));
+    //    let end = self.idx + len;
+    //    let res = &self.str[self.idx..end];
+    //    self.idx = end;
+    //    Some(res)
+    //}
+};
+
+
+}
+// Configuration parameters for the DST
+// In one place for ease of tweaking
+const config = struct {
+    const MAX_TIME_IN_MS: u64 = 1000 * 60 * 60 * 24; // 24 hours,
+    const CREATE_STREAM_CHANCE: f64 = 0.01;
+    const ADVANCE_OS_CHANCE: f64 = 0.1;
+    const MAX_STREAM_NAME_LEN: usize = 64;
+    const MAX_BYTES_STREAM_NAMES_SRC: usize = 1024;
 };
 //const FileIO = struct {
 //    fs: ArrayListUnmanged(ArrayListUnmanged(u8)),
@@ -251,36 +283,36 @@ const usr = struct {
 //    );
 //    std.debug.print("Time: {} μs\n", .{phys_time_elapsed});
 //}
-//
-//pub fn main() !void {
-//    var args = std.process.args();
-//    _ = args.skip();
-//
-//    const mode = args.next() orelse @panic("First arg must be 'live' or 'bg'");
-//    const seed = if (args.next()) |arg|
-//        try std.fmt.parseInt(u64, arg, 10)
-//    else
-//        std.crypto.random.int(u64);
-//
-//    std.debug.print("Seed = {}\n", .{seed});
-//
-//    var rng = rand.DefaultPrng.init(seed);
-//    var gpa = heap.GeneralPurposeAllocator(.{}){};
-//    var sim = try Simulator.init(gpa.allocator(), rng.random());
-//
-//    if (std.mem.eql(u8, mode, "bg")) {
-//        try bg_simulation(&sim);
-//    } else if (std.mem.eql(u8, mode, "live")) {
-//        try live_simulation(&sim);
-//    } else {
-//        unreachable;
-//    }
-//
-//    sim.deinit();
-//    if (gpa.deinit() == .leak) {
-//        std.debug.print("memory leak!!!!", .{});
-//    }
-//}
+
+pub fn main() !void {
+    //var args = std.process.args();
+    //_ = args.skip();
+
+    //const mode = args.next() orelse @panic("First arg must be 'live' or 'bg'");
+    //const seed = if (args.next()) |arg|
+    //    try std.fmt.parseInt(u64, arg, 10)
+    //else
+    //    std.crypto.random.int(u64);
+
+    //std.debug.print("Seed = {}\n", .{seed});
+
+    //var rng = rand.DefaultPrng.init(seed);
+    //var gpa = heap.GeneralPurposeAllocator(.{}){};
+    //var sim = try Simulator.init(gpa.allocator(), rng.random());
+
+    //if (std.mem.eql(u8, mode, "bg")) {
+    //    try bg_simulation(&sim);
+    //} else if (std.mem.eql(u8, mode, "live")) {
+    //    try live_simulation(&sim);
+    //} else {
+    //    unreachable;
+    //}
+
+    //sim.deinit();
+    //if (gpa.deinit() == .leak) {
+    //    std.debug.print("memory leak!!!!", .{});
+    //}
+}
 //
 //test "sim lifetime" {
 //    var rng = rand.DefaultPrng.init(0);

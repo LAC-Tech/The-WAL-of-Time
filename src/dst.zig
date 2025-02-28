@@ -32,27 +32,27 @@ const os = struct {
     const OS = struct {
         events: PriorityQueue(Event, void, event_compare),
         files: ArrayListUnmanged(ArrayListUnmanged(u8)),
-        random: *std.Random,
+        rng: *std.Random,
         stats: Stats,
 
-        fn init(allocator: mem.Allocator, random: *std.Random) @This() {
+        fn init(allocator: mem.Allocator, rng: *std.Random) @This() {
             return .{
                 .events = EventQueue.init(allocator, {}),
                 .files = .{},
-                .random = random,
+                .rng = rng,
                 .stats = .{},
             };
         }
 
         fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.events.deinit(allocator);
+            self.events.deinit();
             for (self.files.items) |file| {
-                file.deinit(allocator);
+                &file.deinit(allocator);
             }
             self.files.deinit(allocator);
         }
 
-        fn send(self: *@This(), req: file_io.req) !void {
+        pub fn send(self: *@This(), req: file_io.req) !void {
             const e = .{ .priority = self.rng.int(u64), .req = req };
             try self.events.add(e);
         }
@@ -190,7 +190,7 @@ const Simulator = struct {
 
     pub fn deinit(self: *@This()) void {
         self.db.deinit(self.allocator);
-        os.OS.deinit(self.allocator);
+        self.os.deinit(self.allocator);
         self.rsng.deinit(self.allocator);
     }
 
@@ -198,7 +198,12 @@ const Simulator = struct {
         if (config.create_stream_chance > self.rng.float(f64)) {
             if (self.rsng.get(self.rng)) |s| {
                 self.db.create_stream(s, &self.os) catch |err| {
-                    self.usr_ctx.on_stream_create_req_err(err);
+                    switch (err) {
+                        error.OutOfMemory => return err,
+                        else => |scre| {
+                            self.usr_ctx.on_stream_create_req_err(scre);
+                        },
+                    }
                 };
             }
         }

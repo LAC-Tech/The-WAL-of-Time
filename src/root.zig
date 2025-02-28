@@ -27,7 +27,7 @@ pub fn file_io(comptime FD: type) type {
 }
 
 const db_ctx = struct {
-    const create = union(enum(u8)) {
+    const create = union(enum) {
         stream: struct { name_idx: u8, _padding: u32 = 0 },
     };
 
@@ -64,11 +64,12 @@ const RequestedStreamNames = struct {
 
     /// Index if it succeeds, None if it's a duplicate
     fn add(self: *@This(), name: []const u8) CreateStreamReqErr!u8 {
-        if (mem.containsAtLeast(*[64][]const u8, self.names, 1, name)) {
-            return error.DuplicateStreamNameRequested;
+        for (self.names) |existing_name| {
+            if (mem.eql(u8, existing_name, name))
+                return error.DuplicateStreamNameRequested;
         }
 
-        const idx = @ctz(~self.used_slots); // First free slot
+        const idx = @ctz(self.used_slots); // First free slot
         if (idx >= 64) {
             return error.RequestedStreamNameOverflow;
         }
@@ -113,7 +114,7 @@ pub fn DB(comptime FD: type) type {
             };
         }
 
-        fn deinit(self: *@This(), allocator: mem.Allocator) void {
+        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.rsns.deinit(allocator);
             self.streams.deinit(allocator);
         }
@@ -126,7 +127,7 @@ pub fn DB(comptime FD: type) type {
             self: *@This(),
             name: []const u8,
             os: anytype,
-        ) CreateStreamReqErr!void {
+        ) !void {
             const file_io_req: file_io(FD).req = .{
                 .create = .{
                     .stream = .{
@@ -134,7 +135,7 @@ pub fn DB(comptime FD: type) type {
                     },
                 },
             };
-            os.send(file_io_req);
+            try os.send(file_io_req);
         }
 
         fn res_file_io_to_usr(

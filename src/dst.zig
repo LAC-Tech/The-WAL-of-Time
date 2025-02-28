@@ -12,7 +12,7 @@ const ArrayListUnmanged = std.ArrayListUnmanaged;
 const AutoHashMap = std.AutoHashMap;
 const PriorityQueue = std.PriorityQueue;
 
-const lib = @import("./root.zig");
+const lib = @import("./lib.zig");
 
 const c = @cImport({
     @cInclude("tui.h");

@@ -27,20 +27,19 @@ const os = struct {
         return math.order(a.priority, b.priority);
     }
     const EventQueue = PriorityQueue(Event, void, event_compare);
-    const Stats = struct { file_created: u64 = 0 };
 
     const OS = struct {
         events: PriorityQueue(Event, void, event_compare),
         files: ArrayListUnmanged(ArrayListUnmanged(u8)),
         rng: *std.Random,
-        stats: Stats,
+        stats: c.os_stats,
 
         fn init(allocator: mem.Allocator, rng: *std.Random) @This() {
             return .{
                 .events = EventQueue.init(allocator, {}),
                 .files = .{},
                 .rng = rng,
-                .stats = .{},
+                .stats = mem.zeroes(c.os_stats),
             };
         }
 
@@ -66,7 +65,7 @@ const os = struct {
                 .create => |usr_data| {
                     try self.files.append(allocator, .{});
                     const fd = self.files.items.len;
-                    self.stats.file_created += 1;
+                    self.stats.files_created += 1;
                     return .{ .create = .{ .fd = fd, .usr_data = usr_data } };
                 },
                 else => @panic("TODO: handle more events"),
@@ -90,10 +89,10 @@ const os = struct {
 
 const usr = struct {
     const Ctx = struct {
-        stats: Stats,
+        stats: c.usr_stats,
 
         fn init() @This() {
-            return .{ .stats = .{} };
+            return .{ .stats = mem.zeroes(c.usr_stats) };
         }
 
         fn on_stream_create_req_err(
@@ -117,12 +116,6 @@ const usr = struct {
                 },
             }
         }
-    };
-
-    const Stats = struct {
-        streams_created: u64 = 0,
-        stream_name_duplicates: u64 = 0,
-        stream_name_reservation_limit_exceeded: u64 = 0,
     };
 };
 
@@ -212,24 +205,24 @@ const Simulator = struct {
         }
     }
 
-    fn stats(self: *@This()) struct { os.Stats, usr.Stats } {
+    fn stats(self: *@This()) struct { c.os_stats, c.usr_stats } {
         return .{ self.os.stats, self.usr_ctx.stats };
     }
 };
 
-//fn live_simulation(sim: *Simulator) !void {
-//    var tui = mem.zeroes(c.tui);
-//    c.tui_init(&tui);
-//    defer c.tui_deinit(&tui);
-//
-//    var time: u64 = 0;
-//    while (time <= Config.max_sim_time_in_ms) : (time += 10) {
-//        try sim.tick();
-//        if (time % (1000 * 60) == 0) {
-//            c.tui_sim_render(&tui, &sim.ctx.stats, time);
-//        }
-//    }
-//}
+fn live_simulation(sim: *Simulator) !void {
+    var tui = mem.zeroes(c.tui);
+    c.tui_init(&tui);
+    defer c.tui_deinit(&tui);
+
+    var time: u64 = 0;
+    while (time <= config.max_time_in_ms) : (time += 10) {
+        try sim.tick();
+        if (time % (1000 * 60) == 0) {
+            c.tui_sim_render(&tui, &sim.os.stats, &sim.usr_ctx.stats, time);
+        }
+    }
+}
 
 fn bg_simulation(sim: *Simulator) !void {
     const phys_start_time = std.time.microTimestamp();
@@ -267,8 +260,7 @@ pub fn main() !void {
     if (std.mem.eql(u8, mode, "bg")) {
         try bg_simulation(&sim);
     } else if (std.mem.eql(u8, mode, "live")) {
-        @panic("TODO: re-write live simulation");
-        //    try live_simulation(&sim);
+        try live_simulation(&sim);
     } else {
         unreachable;
     }

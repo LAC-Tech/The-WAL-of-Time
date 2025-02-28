@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <notcurses/notcurses.h>
+#include <sys/types.h>
 
 typedef struct {
 	struct notcurses* nc;
@@ -22,11 +23,21 @@ typedef struct {
 } tui;
 
 typedef struct {
-    uint64_t os_files_created;
-} stats;
+    uint64_t files_created;
+} os_stats;
+
+typedef struct {
+    uint64_t streams_created;
+    uint64_t stream_name_duplicates;
+    uint64_t stream_name_reservation_limit_exceeded;
+} usr_stats;
 
 void tui_init(tui* ctx);
 void tui_deinit(tui* ctx); 
-void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms);
+void tui_sim_render(
+        tui* ctx,
+        os_stats* os_stats,
+        usr_stats* usr_stats,
+        uint64_t time_in_ms);
 
 #endif // TUI_H

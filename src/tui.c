@@ -50,7 +50,12 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
+void tui_sim_render(
+        tui* ctx,
+        os_stats* os_stats,
+        usr_stats* usr_stats,
+        uint64_t time_in_ms
+) {
     uint64_t seconds_total = time_in_ms / 1000;
     uint64_t hours = seconds_total / 3600;
     uint64_t minutes = (seconds_total % 3600) / 60;
@@ -71,7 +76,7 @@ void tui_sim_render(tui* ctx, stats* stats, uint64_t time_in_ms) {
         ctx->height / 2,
         NCALIGN_CENTER,
         "Files created = %ju",
-        stats->os_files_created
+        os_stats->files_created
     );
 
     notcurses_render(ctx->nc);

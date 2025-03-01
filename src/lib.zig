@@ -129,6 +129,11 @@ pub fn DB(comptime FD: type) type {
             name: []const u8,
             os: anytype,
         ) !void {
+            // Cannot request the name of a stream we already have
+            if (self.streams.contains(name)) {
+                return error.DuplicateStreamNameRequested;
+            }
+
             const file_io_req: file_io(FD).req = .{
                 .create = .{
                     .stream = .{

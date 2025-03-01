@@ -5,7 +5,8 @@
 
 void tui_init(tui* ctx) {
     setlocale(LC_ALL, "");
-    notcurses_options ncopt = {0};
+    // no notcurses stats on exit
+    notcurses_options ncopt = {.flags = NCOPTION_SUPPRESS_BANNERS};
 
     struct notcurses* nc = notcurses_core_init(&ncopt, stdout);
     struct ncplane* stdplane = notcurses_stdplane(nc);
@@ -62,7 +63,7 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-bool tui_sim_render(
+tui_tick_res tui_tick(
         tui* ctx,
         os_stats* os_stats,
         usr_stats* usr_stats,
@@ -71,7 +72,9 @@ bool tui_sim_render(
     struct ncinput ni;
     uint32_t key = notcurses_get_nblock(ctx->nc, &ni);
     if (key == 'q') {
-        return false; 
+        return TUI_EXIT; 
+    } else if (key == ' ') {
+        return TUI_PAUSE;
     }
 
     uint64_t seconds_total = time_in_ms / 1000;
@@ -123,5 +126,5 @@ bool tui_sim_render(
     );
 
     notcurses_render(ctx->nc);
-    return true;
+    return TUI_CONTINUE;
 }

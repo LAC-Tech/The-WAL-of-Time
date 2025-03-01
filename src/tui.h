@@ -34,7 +34,10 @@ typedef struct {
 
 void tui_init(tui* ctx);
 void tui_deinit(tui* ctx); 
-bool tui_sim_render(
+
+typedef enum { TUI_CONTINUE, TUI_EXIT, TUI_PAUSE } tui_tick_res;
+
+tui_tick_res tui_tick (
         tui* ctx,
         os_stats* os_stats,
         usr_stats* usr_stats,

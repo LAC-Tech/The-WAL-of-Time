@@ -219,14 +219,20 @@ fn live_simulation(sim: *Simulator) !void {
     while (time <= config.max_time_in_ms) : (time += 10) {
         try sim.tick();
         if (time % (1000 * 60) == 0) {
-            const render_res = c.tui_sim_render(
+            const res = c.tui_tick(
                 &tui,
                 &sim.os.stats,
                 &sim.usr_ctx.stats,
                 time,
             );
 
-            if (!render_res) return;
+            switch (res) {
+                c.TUI_EXIT => return,
+                c.TUI_CONTINUE => {},
+                c.TUI_PAUSE => {} // TODO: ,
+                // Zig can't do exhausting switching on C enums
+                else => unreachable,
+            }
         }
     }
 }

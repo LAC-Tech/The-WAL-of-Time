@@ -37,6 +37,7 @@ void tui_init(tui* ctx) {
             });
 
     *ctx = (tui){
+        .state = TUI_RUNNING,
         .nc = nc,
         .titleplane = titleplane,
         .statsplane = statsplane,
@@ -63,18 +64,20 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-tui_tick_res tui_tick(
-        tui* ctx,
+void tui_tick(
+        tui* tui,
         os_stats* os_stats,
         usr_stats* usr_stats,
         uint64_t time_in_ms
 ) {
     struct ncinput ni;
-    uint32_t key = notcurses_get_nblock(ctx->nc, &ni);
+    uint32_t key = notcurses_get_nblock(tui->nc, &ni);
     if (key == 'q') {
-        return TUI_EXIT; 
+        tui->state = TUI_FINISHED;
+        return; 
     } else if (key == ' ') {
-        return TUI_PAUSE;
+        tui->state = TUI_PAUSED;
+        return;
     }
 
     uint64_t seconds_total = time_in_ms / 1000;
@@ -85,46 +88,49 @@ tui_tick_res tui_tick(
     hours = hours % 24;
 
     ncplane_printf_yx(
-        ctx->titleplane,
+        tui->titleplane,
         0,
-        ctx->width - 8, // Just like on our computers!!!
+        tui->width - 8, // Just like on our computers!!!
         " %02ju:%02ju ",
         hours, minutes
     );
 
-    ncplane_printf_aligned(ctx->statsplane, 1, NCALIGN_CENTER, "User Stats");
+    ncplane_printf_aligned(tui->statsplane, 1, NCALIGN_CENTER, "User Stats");
 
     ncplane_printf_aligned(
-        ctx->statsplane,
+        tui->statsplane,
         2,
         NCALIGN_CENTER,
         "* Streams Created = %ju",
         usr_stats->streams_created
     );
     ncplane_printf_aligned(
-        ctx->statsplane,
+        tui->statsplane,
         3,
         NCALIGN_CENTER,
         "* Streams Name Duplicates = %ju",
         usr_stats->stream_name_duplicates
     );
     ncplane_printf_aligned(
-        ctx->statsplane,
+        tui->statsplane,
         4,
         NCALIGN_CENTER,
         "* Stream Name Reservation Limited Exceeded = %ju",
         usr_stats->stream_name_reservation_limit_exceeded
     );
-    ncplane_printf_aligned(ctx->statsplane, 5, NCALIGN_CENTER, "OS Stats");
+    ncplane_printf_aligned(tui->statsplane, 5, NCALIGN_CENTER, "OS Stats");
 
     ncplane_printf_aligned(
-        ctx->statsplane,
+        tui->statsplane,
         6,
         NCALIGN_CENTER,
         "Files created = %ju",
         os_stats->files_created
     );
 
-    notcurses_render(ctx->nc);
-    return TUI_CONTINUE;
+    notcurses_render(tui->nc);
+}
+
+void tui_wait_for_keypress(tui* tui) {
+    notcurses_get_blocking(tui->nc, NULL);
 }

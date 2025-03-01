@@ -62,12 +62,18 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-void tui_sim_render(
+bool tui_sim_render(
         tui* ctx,
         os_stats* os_stats,
         usr_stats* usr_stats,
         uint64_t time_in_ms
 ) {
+    struct ncinput ni;
+    uint32_t key = notcurses_get_nblock(ctx->nc, &ni);
+    if (key == 'q') {
+        return false; 
+    }
+
     uint64_t seconds_total = time_in_ms / 1000;
     uint64_t hours = seconds_total / 3600;
     uint64_t minutes = (seconds_total % 3600) / 60;
@@ -117,4 +123,5 @@ void tui_sim_render(
     );
 
     notcurses_render(ctx->nc);
+    return true;
 }

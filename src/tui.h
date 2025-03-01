@@ -34,7 +34,7 @@ typedef struct {
 
 void tui_init(tui* ctx);
 void tui_deinit(tui* ctx); 
-void tui_sim_render(
+bool tui_sim_render(
         tui* ctx,
         os_stats* os_stats,
         usr_stats* usr_stats,

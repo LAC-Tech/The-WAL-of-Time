@@ -219,7 +219,14 @@ fn live_simulation(sim: *Simulator) !void {
     while (time <= config.max_time_in_ms) : (time += 10) {
         try sim.tick();
         if (time % (1000 * 60) == 0) {
-            c.tui_sim_render(&tui, &sim.os.stats, &sim.usr_ctx.stats, time);
+            const render_res = c.tui_sim_render(
+                &tui,
+                &sim.os.stats,
+                &sim.usr_ctx.stats,
+                time,
+            );
+
+            if (!render_res) return;
         }
     }
 }

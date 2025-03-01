@@ -11,22 +11,34 @@ void tui_init(tui* ctx) {
     struct ncplane* stdplane = notcurses_stdplane(nc);
     notcurses_term_dim_yx(nc, &ctx->height, &ctx->width);
 
-    struct ncplane_options opts = {
-        .y = 0,
-        .x = 0,
-        .rows = 1,
-        .cols = ctx->width,
-        .userptr = NULL,
-        .name = "topplane",
-        .flags = 0
-    };
+    struct ncplane* titleplane = ncplane_create(
+            stdplane, 
+            &(struct ncplane_options){
+                .y = 0,
+                .x = 0,
+                .rows = 1,
+                .cols = ctx->width,
+                .userptr = NULL,
+                .name = "titleplane",
+                .flags = 0
+            });
 
-    struct ncplane* titleplane = ncplane_create(stdplane, &opts);
+    struct ncplane* statsplane = ncplane_create(
+            stdplane, 
+            &(struct ncplane_options){
+                .y = 1,
+                .x = 0,
+                .rows = 8,
+                .cols = ctx->width,
+                .userptr = NULL,
+                .name = "statsplane",
+                .flags = 0
+            });
 
     *ctx = (tui){
         .nc = nc,
-        .stdplane = stdplane,
         .titleplane = titleplane,
+        .statsplane = statsplane,
         .width = ctx->width,
         .height = ctx->height
     };
@@ -38,10 +50,10 @@ void tui_init(tui* ctx) {
     ncplane_set_bg_rgb(ctx->titleplane, 0x000000); 
     ncplane_putstr_yx(ctx->titleplane, 0, 1, text);
 
-    ncplane_perimeter_rounded(ctx->stdplane, 0, 0, 0);
+    ncplane_perimeter_rounded(ctx->statsplane, 0, 0, 0);
 
-    ncplane_set_fg_rgb(ctx->stdplane, 0x000000);
-    ncplane_set_bg_rgb(ctx->stdplane, 0xFFFFFF); 
+    ncplane_set_fg_rgb(ctx->statsplane, 0x000000);
+    ncplane_set_bg_rgb(ctx->statsplane, 0xFFFFFF); 
 
     notcurses_render(nc);
 }
@@ -71,9 +83,34 @@ void tui_sim_render(
         hours, minutes
     );
 
+    ncplane_printf_aligned(ctx->statsplane, 1, NCALIGN_CENTER, "User Stats");
+
     ncplane_printf_aligned(
-        ctx->stdplane,
-        ctx->height / 2,
+        ctx->statsplane,
+        2,
+        NCALIGN_CENTER,
+        "* Streams Created = %ju",
+        usr_stats->streams_created
+    );
+    ncplane_printf_aligned(
+        ctx->statsplane,
+        3,
+        NCALIGN_CENTER,
+        "* Streams Name Duplicates = %ju",
+        usr_stats->stream_name_duplicates
+    );
+    ncplane_printf_aligned(
+        ctx->statsplane,
+        4,
+        NCALIGN_CENTER,
+        "* Stream Name Reservation Limited Exceeded = %ju",
+        usr_stats->stream_name_reservation_limit_exceeded
+    );
+    ncplane_printf_aligned(ctx->statsplane, 5, NCALIGN_CENTER, "OS Stats");
+
+    ncplane_printf_aligned(
+        ctx->statsplane,
+        6,
         NCALIGN_CENTER,
         "Files created = %ju",
         os_stats->files_created

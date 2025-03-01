@@ -16,8 +16,8 @@
 
 typedef struct {
 	struct notcurses* nc;
-	struct ncplane* stdplane;
 	struct ncplane* titleplane; 
+	struct ncplane* statsplane; 
 	unsigned int width;
 	unsigned int height;
 } tui;

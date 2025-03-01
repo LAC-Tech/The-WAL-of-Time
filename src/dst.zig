@@ -18,6 +18,16 @@ const c = @cImport({
     @cInclude("tui.h");
 });
 
+// Configuration parameters for the DST
+// In one place for ease of tweaking
+const config = struct {
+    const max_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours,
+    const create_stream_chance: f64 = 0.1;
+    const advance_os_chance: f64 = 0.5;
+    const max_stream_name_len: usize = 64;
+    const max_bytes_stream_names_src: usize = 0xFFF;
+};
+
 const os = struct {
     const FD = usize;
     const file_io = lib.file_io(FD);
@@ -148,16 +158,6 @@ const RandStreamNameGenerator = struct {
         self.idx = end;
         return res;
     }
-};
-
-// Configuration parameters for the DST
-// In one place for ease of tweaking
-const config = struct {
-    const max_time_in_ms: u64 = 1000 * 60 * 60 * 24; // 24 hours,
-    const create_stream_chance: f64 = 0.1;
-    const advance_os_chance: f64 = 0.5;
-    const max_stream_name_len: usize = 64;
-    const max_bytes_stream_names_src: usize = 1024;
 };
 
 const Simulator = struct {

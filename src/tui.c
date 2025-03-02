@@ -1,6 +1,7 @@
 #include "tui.h"
 #include <locale.h>
 #include <notcurses/notcurses.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 void tui_init(tui* ctx) {
@@ -37,12 +38,12 @@ void tui_init(tui* ctx) {
             });
 
     *ctx = (tui){
-        .state = TUI_RUNNING,
         .nc = nc,
         .titleplane = titleplane,
         .statsplane = statsplane,
         .width = ctx->width,
-        .height = ctx->height
+        .height = ctx->height,
+        .paused = false,
     };
 
     char* text = " Deterministic Simulation Tester ";
@@ -64,20 +65,30 @@ void tui_deinit(tui* ctx) {
     notcurses_stop(ctx->nc);
 }
 
-void tui_tick(
+// Returns "true" if we can tick some more;
+bool tui_tick(
         tui* tui,
         os_stats* os_stats,
         usr_stats* usr_stats,
         uint64_t time_in_ms
 ) {
     struct ncinput ni;
+
+    if (tui->paused) {
+        printf("Paused\n"); // Does this print?
+        while (tui->paused) {
+            notcurses_get_blocking(tui->nc, &ni);
+            tui->paused = false;
+            return true;
+        }
+    }
+
     uint32_t key = notcurses_get_nblock(tui->nc, &ni);
     if (key == 'q') {
-        tui->state = TUI_FINISHED;
-        return; 
+        return false; 
     } else if (key == ' ') {
-        tui->state = TUI_PAUSED;
-        return;
+        tui->paused = true;
+        return true;
     }
 
     uint64_t seconds_total = time_in_ms / 1000;
@@ -129,8 +140,5 @@ void tui_tick(
     );
 
     notcurses_render(tui->nc);
-}
-
-void tui_wait_for_keypress(tui* tui) {
-    notcurses_get_blocking(tui->nc, NULL);
+    return true;
 }

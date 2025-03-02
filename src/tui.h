@@ -14,15 +14,13 @@
 #include <notcurses/notcurses.h>
 #include <sys/types.h>
 
-typedef enum { TUI_RUNNING, TUI_PAUSED, TUI_FINISHED } tui_state;
-
 typedef struct {
-    tui_state state;
 	struct notcurses* nc;
 	struct ncplane* titleplane; 
 	struct ncplane* statsplane; 
 	unsigned int width;
 	unsigned int height;
+    bool paused;
 } tui;
 
 typedef struct {
@@ -38,15 +36,11 @@ typedef struct {
 void tui_init(tui* ctx);
 void tui_deinit(tui* ctx); 
 
-
 // Renders and reads key presses. Result of keypress is returned.
-void tui_tick (
+bool tui_tick (
         tui* ctx,
         os_stats* os_stats,
         usr_stats* usr_stats,
         uint64_t time_in_ms);
-
-// TODO: temporary, just for basic unpause functionality.
-void tui_wait_for_keypress(tui* ctx);
 
 #endif // TUI_H

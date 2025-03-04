@@ -39,7 +39,7 @@ const os = struct {
     const EventQueue = PriorityQueue(Event, void, event_compare);
 
     const OS = struct {
-        events: PriorityQueue(Event, void, event_compare),
+        events: EventQueue,
         files: ArrayListUnmanged(ArrayListUnmanged(u8)),
         rng: *std.Random,
         stats: c.os_stats,

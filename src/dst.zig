@@ -5,7 +5,7 @@ const heap = std.heap;
 const math = std.math;
 const mem = std.mem;
 const posix = std.posix;
-const rand = std.rand;
+const rand = std.Random;
 const testing = std.testing;
 
 const ArrayListUnmanged = std.ArrayListUnmanaged;
@@ -62,7 +62,7 @@ const os = struct {
         }
 
         pub fn send(self: *@This(), req: file_io.req) !void {
-            const e = .{ .priority = self.rng.int(u64), .req = req };
+            const e: Event = .{ .priority = self.rng.int(u64), .req = req };
             try self.events.add(e);
         }
 

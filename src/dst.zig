@@ -218,7 +218,7 @@ fn live_simulation(sim: *Simulator) !void {
     var time: u64 = 0;
     while (time <= config.max_time_in_ms) : (time += 10) {
         try sim.tick();
-        if (time % (1000 * 60) == 0) {
+        if (time % 1000 == 0) {
             const more_ticks = c.tui_tick(
                 &tui,
                 &sim.os.stats,

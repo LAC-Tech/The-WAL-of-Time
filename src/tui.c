@@ -49,7 +49,12 @@ void tui_deinit(tui* ctx) {
     endwin();
 }
 
-bool tui_tick(tui* tui, os_stats* os_stats, usr_stats* usr_stats, uint64_t time_in_ms) {
+bool tui_tick(
+        tui* tui,
+        os_stats* os_stats,
+        usr_stats* usr_stats,
+        uint64_t time_in_ms
+) {
     nodelay(stdscr, TRUE); // Non-blocking input
     int key = getch();     // Check for input
     nodelay(stdscr, FALSE); // Switch back to blocking for pause
@@ -70,8 +75,16 @@ bool tui_tick(tui* tui, os_stats* os_stats, usr_stats* usr_stats, uint64_t time_
     uint64_t seconds_total = time_in_ms / 1000;
     uint64_t hours = seconds_total / 3600;
     uint64_t minutes = (seconds_total % 3600) / 60;
+    uint64_t seconds = seconds_total % 60;  // Add this line
     hours = hours % 24;
-    mvwprintw(tui->title_win, 0, tui->width - 8, " %02lu:%02lu ", hours, minutes);
+    mvwprintw(
+            tui->title_win,
+            0, tui->width - 11,
+            " %02lu:%02lu:%02lu ",
+            hours,
+            minutes,
+            seconds);
+    
     wrefresh(tui->title_win);
 
     // Stats display

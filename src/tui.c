@@ -65,9 +65,13 @@ bool tui_tick(
     } else if (key == ' ') {
         refresh();
         tcflush(0, TCIFLUSH);  // Flush input buffer (stdin FD = 0)
-        getch();               // Block until any key is pressed
-        refresh();
-        return true;
+        // Block until any key is pressed
+        if (getch() == 'q') {
+            return false;
+        } else {
+            refresh();
+            return true;
+        }
     }
 
     // Time display

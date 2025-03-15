@@ -277,12 +277,13 @@ pub fn main() !void {
         std.debug.print("memory leak!!!!", .{});
     }
 }
-//
-//test "sim lifetime" {
-//    var rng = rand.DefaultPrng.init(0);
-//    var sim = try Simulator.init(testing.allocator, rng.random());
-//    for (0..1000) |_| {
-//        try sim.tick();
-//    }
-//    defer sim.deinit();
-//}
+
+test "sim lifetime" {
+    var rng = rand.DefaultPrng.init(0);
+    var random = rng.random();
+    var sim = try Simulator.init(testing.allocator, &random);
+    for (0..1000) |_| {
+        try sim.tick();
+    }
+    defer sim.deinit();
+}

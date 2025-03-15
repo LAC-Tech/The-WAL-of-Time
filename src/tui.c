@@ -11,6 +11,7 @@ void tui_init(tui* tui) {
     initscr();
     raw();
     noecho();
+    curs_set(0);
     keypad(stdscr, TRUE); // Enable special keys
     getmaxyx(stdscr, tui->height, tui->width);
 
@@ -64,9 +65,7 @@ bool tui_tick(
     } else if (key == ' ') {
         refresh();
         tcflush(0, TCIFLUSH);  // Flush input buffer (stdin FD = 0)
-        curs_set(0);
         getch();               // Block until any key is pressed
-        curs_set(1);
         refresh();
         return true;
     }

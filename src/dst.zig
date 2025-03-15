@@ -8,8 +8,7 @@ const posix = std.posix;
 const rand = std.Random;
 const testing = std.testing;
 
-const ArrayListUnmanged = std.ArrayListUnmanaged;
-const AutoHashMap = std.AutoHashMap;
+const ArrayList = std.ArrayListUnmanaged;
 const PriorityQueue = std.PriorityQueue;
 
 const lib = @import("./lib.zig");
@@ -40,7 +39,7 @@ const os = struct {
 
     const OS = struct {
         events: EventQueue,
-        files: ArrayListUnmanged(ArrayListUnmanged(u8)),
+        files: ArrayList(ArrayList(u8)),
         rng: *std.Random,
         stats: c.os_stats,
 
@@ -253,11 +252,11 @@ pub fn main() !void {
 
     const mode = args.next() orelse @panic("First arg must be 'live' or 'bg'");
     const seed = if (args.next()) |arg|
-        try std.fmt.parseInt(u64, arg, 10)
+        try std.fmt.parseInt(u64, arg, 16)
     else
         std.crypto.random.int(u64);
 
-    std.debug.print("Seed = {}\n", .{seed});
+    std.debug.print("Seed = {x}\n", .{seed});
 
     var rng = rand.DefaultPrng.init(seed);
     var random = rng.random();

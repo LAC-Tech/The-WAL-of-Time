@@ -5,7 +5,7 @@ const posix = std.posix;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-const StringHashMapUnmanaged = std.StringHashMapUnmanaged;
+const StringHashMap = std.StringHashMapUnmanaged;
 
 // Only worrying about 64 bit systems for now
 comptime {
@@ -104,7 +104,7 @@ pub fn DB(comptime FD: type) type {
     return struct {
         rsns: RequestedStreamNames,
         /// Does not own the string keys
-        streams: StringHashMapUnmanaged(FD),
+        streams: StringHashMap(FD),
         allocator: mem.Allocator,
 
         pub fn init(allocator: mem.Allocator) !@This() {

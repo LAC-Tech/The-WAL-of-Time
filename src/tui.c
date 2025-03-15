@@ -31,7 +31,6 @@ void tui_init(tui* tui) {
     wborder(tui->stats_win, ACS_VLINE, ACS_VLINE, ACS_HLINE, ACS_HLINE, 
             ACS_ULCORNER, ACS_URCORNER, ACS_LLCORNER, ACS_LRCORNER);
 
-
     wattron(tui->stats_win, A_BOLD);
     mvwprintw(tui->stats_win, 1, 1, "User Stats");
     wattroff(tui->stats_win, A_BOLD);

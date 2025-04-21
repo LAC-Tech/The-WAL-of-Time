@@ -14,7 +14,7 @@ use hashbrown::HashMap;
 // Only worrying about 64 bit systems for now
 const _: () = assert!(mem::size_of::<usize>() == 8);
 
-pub trait FileIO {
+pub trait AsyncFileIO {
     type FD;
     fn send(&mut self, req: IOReq<Self::FD>);
 }
@@ -122,6 +122,7 @@ impl<'a, FD> DB<'a, FD> {
             streams: HashMap::with_hasher(FixedState::with_seed(seed)),
         }
     }
+
     /// The stream name is raw bytes; focusing on linux first, and ext4
     /// filenames are bytes, not a particular encoding.
     /// TODO: some way of translating this into the the platforms native
@@ -129,7 +130,7 @@ impl<'a, FD> DB<'a, FD> {
     pub fn create_stream(
         &mut self,
         name: &'a [u8],
-        file_io: &mut impl FileIO<FD = FD>,
+        file_io: &mut impl AsyncFileIO<FD = FD>,
     ) -> Result<(), CreateStreamErr> {
         let name_idx = self.rsn.add(name)?;
         let usr_data = db_ctx::Create::Stream { name_idx, _padding: 0 };

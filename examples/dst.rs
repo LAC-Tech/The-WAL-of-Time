@@ -5,7 +5,7 @@ use rust::DB;
 mod os {
     use super::usr;
     use rand::prelude::*;
-    use rust::{DB, FileIO, IOReq, IORes};
+    use rust::{AsyncFileIO, DB, IOReq, IORes};
     use std::collections::BinaryHeap;
 
     pub type FD = usize;
@@ -70,7 +70,7 @@ mod os {
         }
     }
 
-    impl FileIO for OS {
+    impl AsyncFileIO for OS {
         type FD = FD;
         fn send(&mut self, req: IOReq<FD>) {
             let priority: u64 = self.rng.random();

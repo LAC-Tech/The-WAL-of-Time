@@ -1,17 +1,15 @@
 use rand::prelude::*;
 
-use rust::DB;
-
 mod os {
     use super::usr;
     use rand::prelude::*;
-    use rust::{AsyncFileIO, DB, IOReq, IORes};
+    use rust::{db, file_io};
     use std::collections::BinaryHeap;
 
     pub type FD = usize;
     struct Event {
         priority: u64,
-        req: IOReq<FD>,
+        req: file_io::Req<FD>,
     }
     impl PartialEq for Event {
         fn eq(&self, other: &Self) -> bool { self.priority == other.priority }
@@ -54,14 +52,14 @@ mod os {
 
         // Advances the state of the OS.
         // Should not happen every sim tick, I don't think
-        pub fn tick(&mut self, db: &mut DB<FD>, usr_ctx: &mut usr::Ctx) {
+        pub fn tick(&mut self, db: &mut db::DB<FD>, usr_ctx: &mut usr::Ctx) {
             let Some(e) = self.events.pop() else { return };
             let res = match e.req {
-                IOReq::Create(user_data) => {
+                file_io::Req::Create(user_data) => {
                     self.files.push(vec![]);
                     let fd = self.files.len() - 1;
                     self.stats.files_created += 1;
-                    IORes::Create(fd, user_data)
+                    file_io::Res::Create(fd, user_data)
                 }
                 _ => panic!("TODO: handle more events"),
             };
@@ -70,9 +68,9 @@ mod os {
         }
     }
 
-    impl AsyncFileIO for OS {
+    impl file_io::AsyncFS for OS {
         type FD = FD;
-        fn send(&mut self, req: IOReq<FD>) {
+        fn send(&mut self, req: file_io::Req<FD>) {
             let priority: u64 = self.rng.random();
             let e = Event { priority, req };
             self.events.push(e);
@@ -81,7 +79,7 @@ mod os {
 }
 
 mod usr {
-    use rust::{CreateStreamErr, UserCtx};
+    use rust::{CreateStreamErr, usr_ctx};
 
     #[derive(Default)]
     pub struct Ctx {

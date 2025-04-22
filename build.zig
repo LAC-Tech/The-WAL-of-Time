@@ -1,5 +1,19 @@
 const std = @import("std");
 
+fn addTuiLib(b: *std.Build, c: *std.Build.Step.Compile) void {
+    c.linkLibC();
+    c.linkSystemLibrary("ncurses");
+    c.addCSourceFile(.{
+        .file = b.path("src/tui.c"),
+        .flags = &.{
+            "-std=c23",
+            "-Wall",
+            "-Wextra",
+        },
+    });
+    c.addIncludePath(b.path("src/"));
+}
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -37,18 +51,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // required by notcurses
-    exe.linkLibC();
-    exe.linkSystemLibrary("notcurses-core");
-    exe.addCSourceFile(.{
-        .file = b.path("src/tui.c"),
-        .flags = &.{
-            "-std=c23", // Specify C standard
-            "-Wall", // Turn on all warnings
-            "-Wextra", // Additional warnings
-        },
-    });
-    exe.addIncludePath(b.path("src/"));
+    addTuiLib(b, exe);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -81,7 +84,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -94,17 +97,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe_unit_tests.linkLibC();
-    exe_unit_tests.linkSystemLibrary("notcurses-core");
-    exe_unit_tests.addCSourceFile(.{
-        .file = b.path("src/tui.c"),
-        .flags = &.{
-            "-std=c23", // Specify C standard
-            "-Wall", // Turn on all warnings
-            "-Wextra", // Additional warnings
-        },
-    });
-    exe_unit_tests.addIncludePath(b.path("src/"));
+    addTuiLib(b, exe_unit_tests);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 

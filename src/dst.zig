@@ -5,11 +5,10 @@ const heap = std.heap;
 const math = std.math;
 const mem = std.mem;
 const posix = std.posix;
-const rand = std.rand;
+const rand = std.Random;
 const testing = std.testing;
 
-const ArrayListUnmanged = std.ArrayListUnmanaged;
-const AutoHashMap = std.AutoHashMap;
+const ArrayList = std.ArrayListUnmanaged;
 const PriorityQueue = std.PriorityQueue;
 
 const lib = @import("./lib.zig");
@@ -39,8 +38,8 @@ const os = struct {
     const EventQueue = PriorityQueue(Event, void, event_compare);
 
     const OS = struct {
-        events: PriorityQueue(Event, void, event_compare),
-        files: ArrayListUnmanged(ArrayListUnmanged(u8)),
+        events: EventQueue,
+        files: ArrayList(ArrayList(u8)),
         rng: *std.Random,
         stats: c.os_stats,
 
@@ -62,7 +61,7 @@ const os = struct {
         }
 
         pub fn send(self: *@This(), req: file_io.req) !void {
-            const e = .{ .priority = self.rng.int(u64), .req = req };
+            const e: Event = .{ .priority = self.rng.int(u64), .req = req };
             try self.events.add(e);
         }
 
@@ -218,7 +217,7 @@ fn live_simulation(sim: *Simulator) !void {
     var time: u64 = 0;
     while (time <= config.max_time_in_ms) : (time += 10) {
         try sim.tick();
-        if (time % (1000 * 60) == 0) {
+        if (time % 1000 == 0) {
             const more_ticks = c.tui_tick(
                 &tui,
                 &sim.os.stats,
@@ -253,11 +252,11 @@ pub fn main() !void {
 
     const mode = args.next() orelse @panic("First arg must be 'live' or 'bg'");
     const seed = if (args.next()) |arg|
-        try std.fmt.parseInt(u64, arg, 10)
+        try std.fmt.parseInt(u64, arg, 16)
     else
         std.crypto.random.int(u64);
 
-    std.debug.print("Seed = {}\n", .{seed});
+    std.debug.print("Seed = {x}\n", .{seed});
 
     var rng = rand.DefaultPrng.init(seed);
     var random = rng.random();
@@ -277,12 +276,13 @@ pub fn main() !void {
         std.debug.print("memory leak!!!!", .{});
     }
 }
-//
-//test "sim lifetime" {
-//    var rng = rand.DefaultPrng.init(0);
-//    var sim = try Simulator.init(testing.allocator, rng.random());
-//    for (0..1000) |_| {
-//        try sim.tick();
-//    }
-//    defer sim.deinit();
-//}
+
+test "sim lifetime" {
+    var rng = rand.DefaultPrng.init(0);
+    var random = rng.random();
+    var sim = try Simulator.init(testing.allocator, &random);
+    for (0..1000) |_| {
+        try sim.tick();
+    }
+    defer sim.deinit();
+}

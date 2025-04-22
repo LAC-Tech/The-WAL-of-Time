@@ -11,16 +11,16 @@
 #define TUI_H	
 
 #include <stdint.h>
-#include <notcurses/notcurses.h>
 #include <sys/types.h>
 
+#include <ncurses.h>
+
 typedef struct {
-	struct notcurses* nc;
-	struct ncplane* titleplane; 
-	struct ncplane* statsplane; 
-	unsigned int width;
-	unsigned int height;
-    bool paused;
+    WINDOW* win;
+    WINDOW* title_win;
+    WINDOW* stats_win;
+    int width;
+    int height;
 } tui;
 
 typedef struct {

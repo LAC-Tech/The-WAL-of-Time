@@ -45,7 +45,6 @@ pub enum URes<'a> {
 /// Small bits of data so the DB knows what an IO req was for when it gets the
 /// response back
 mod db_ctx {
-    use core::mem::size_of;
     #[repr(u8)]
     pub enum Create {
         Stream { name_idx: u8, _padding: u32 },
@@ -55,7 +54,7 @@ mod db_ctx {
     // or the udata field of kqueue (void*). So we make sure they can fit in
     // 8 bytes.
     const _: () = {
-        assert!(size_of::<Create>() == 8);
+        assert!(core::mem::size_of::<Create>() == 8);
     };
 }
 

@@ -22,6 +22,8 @@ A rich data model, queryabilitty etc are non-goals; though it is envisioned that
 
 ## Design
 
+Logical "node" vs physical node. A physical single node might be distributed.
+
 WOT is built around an abstract, asynchronous file system with 4 operations; Create, Read, Append, and Delete. All files are append-only, and can never be modified; though they can be deleted.
 
 A WOT DB is made up of multiple append-only files, called event logs. A DB must have at least one event log - that corresponding to the node the DB is on. This is the *local log*. It may in turn have zero to many *remote logs*; these are copies of events recorded on other nodes.

@@ -29,8 +29,10 @@ const config = struct {
 
 const os = struct {
     const FD = usize;
-    const file_io = lib.file_io(FD);
-    const Event = struct { priority: u64, req: file_io.req };
+    const fs_msg = lib.fs_msg(FD);
+    const fs_req = fs_msg.req;
+    const fs_res = fs_msg.res;
+    const Event = struct { priority: u64, req: fs_req };
 
     fn event_compare(_: void, a: Event, b: Event) math.Order {
         return math.order(a.priority, b.priority);
@@ -60,7 +62,7 @@ const os = struct {
             self.files.deinit(allocator);
         }
 
-        pub fn send(self: *@This(), req: file_io.req) !void {
+        pub fn send(self: *@This(), req: fs_req) !void {
             const e: Event = .{ .priority = self.rng.int(u64), .req = req };
             try self.events.add(e);
         }
@@ -68,8 +70,8 @@ const os = struct {
         fn handle_req(
             self: *@This(),
             allocator: mem.Allocator,
-            req: file_io.req,
-        ) !file_io.res {
+            req: fs_req,
+        ) !fs_res {
             switch (req) {
                 .create => |usr_data| {
                     try self.files.append(allocator, .{});

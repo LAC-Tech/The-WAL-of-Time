@@ -12,32 +12,36 @@ comptime {
     assert(@sizeOf(usize) == 8);
 }
 
-pub fn file_io(comptime FD: type) type {
+const FileOps = enum { create, read, append, delete };
+
+// Messages sent to an async file system with a req/res interface
+pub fn fs_msg(comptime FD: type) type {
     return struct {
-        pub const req = union(enum) {
-            create: db_ctx.create,
+        pub const req = union(FileOps) {
+            create: db.ctx.create,
             read: struct { buf: std.ArrayList(u8), offset: usize },
-            append: struct { fd: FD },
+            append: struct { fd: FD, payload: std.ArrayList(u8) },
+            delete: struct { fd: FD },
         };
 
-        pub const res = union(enum) {
-            create: struct { fd: FD, usr_data: db_ctx.create },
-        };
+        pub const res = union(FileOps) { create: struct { fd: FD, usr_data: db.ctx.create }, read: struct {} };
     };
 }
 
-const db_ctx = struct {
-    const create = union(enum) {
-        stream: struct { name_idx: u8, _padding: u32 = 0 },
-    };
+const db = struct {
+    const ctx = struct {
+        const create = union(enum) {
+            stream: struct { name_idx: u8, _padding: u32 = 0 },
+        };
 
-    // These are intended to be used in the user_data field of io_uring (__u64),
-    // or the udata field of kqueue (void*). So we make sure they can fit in
-    // 8 bytes.
-    comptime {
-        // Only worrying about 64 bit systems for now
-        assert(@sizeOf(create) == 8);
-    }
+        // These are intended to be used in the user_data field of io_uring
+        // (__u64) or the udata field of kqueue (void*). So we make sure they
+        // can fit in 8 bytes.
+        comptime {
+            // Only worrying about 64 bit systems for now
+            assert(@sizeOf(create) == 8);
+        }
+    };
 };
 
 /// Streams that are waiting to be created
@@ -127,26 +131,26 @@ pub fn DB(comptime FD: type) type {
         pub fn create_stream(
             self: *@This(),
             name: []const u8,
-            os: anytype,
+            fs: anytype,
         ) !void {
             // Cannot request the name of a stream we already have
             if (self.streams.contains(name)) {
                 return error.DuplicateStreamNameRequested;
             }
 
-            const file_io_req: file_io(FD).req = .{
+            const fs_req: fs_msg(FD).req = .{
                 .create = .{
                     .stream = .{
                         .name_idx = try self.rsns.add(name),
                     },
                 },
             };
-            try os.send(file_io_req);
+            try fs.send(fs_req);
         }
 
         fn res_file_io_to_usr(
             self: *@This(),
-            file_io_res: file_io(FD).res,
+            file_io_res: fs_msg(FD).res,
         ) !URes {
             switch (file_io_res) {
                 .create => |op| {
@@ -169,7 +173,7 @@ pub fn DB(comptime FD: type) type {
 
         pub fn receive_io(
             self: *@This(),
-            res: file_io(FD).res,
+            res: fs_msg(FD).res,
             usr_ctx: anytype,
         ) !void {
             const usr_res = try self.res_file_io_to_usr(res);

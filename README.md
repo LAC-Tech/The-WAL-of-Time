@@ -1,39 +1,38 @@
-# The WAL of Time
+# WAL of Time (WOT)
 
 > The WAL weaves as the WAL wills
 
-WAL of Time is an experimental, asynchronous event store designed for multi-master replication.
+WAL of Time is a distributed log (in the sense of data storage, not logging). It's designed for high physical availability. WAL of Time is a working name, and subject to change. It will henceforth be written as WOT.
 
-WAL of Time is a working name, and subject to change. It will henceforth be written as WOT.
+## Overview and Motivation
 
-## Motivation
+WOT is optimised for recording and synchronising data. That's it. That's all it does. BYO read model.
 
-WOT is optimised for recording and synchronising data.
-
-## Industrial Motivation
-
-
+I see it as something used for ultra high availability systems, that need to respond quickly and sync later. Physically distributed data capture, in industries like logistics. Or local first type scenarios.
 
 ## Non-Goals
 
-WOT unashamedly and intentionally prioritizes availability over consistency.
-
-A rich data model, queryabilitty etc are non-goals; though it is envisioned that a family of CRDT views or indexes could be built atop it.
+WOT unashamedly and intentionally prioritizes availability over consistency. A rich data model, queryability etc are non-goals; though it is envisioned that a family of CRDT views or indexes could be built atop it.
 
 ## Design
 
-Logical "node" vs physical node. A physical single node might be distributed.
+One node has many topics.
+Each topic is made of 1..N logs.
+There must be one local log, this represents events captured on the current node.
+There can be 0..N remote logs, which represents events captured on other nodes.
 
-WOT is built around an abstract, asynchronous file system with 4 operations; Create, Read, Append, and Delete. All files are append-only, and can never be modified; though they can be deleted.
+The whole system is a single threaded event loop, which resolve to the following IO operations for files on disk:
+- Create
+- Read
+- Append
+- Delete
 
-A WOT DB is made up of multiple append-only files, called event logs. A DB must have at least one event log - that corresponding to the node the DB is on. This is the *local log*. It may in turn have zero to many *remote logs*; these are copies of events recorded on other nodes.
-
-
+All files are append-only, and can never be modified; though they can be deleted. 
 
 ## Implementation
 
 I have elected to implement this in Zig, for the following reasons:
 
-- ease of inter-operability with C; C is the lingua franca of computing, and low friction in creating C bindings is very important.
+- ease of C interop; C is the lingua franca of computing, and low friction in creating C bindings is very important.
 - liburing style io_uring bindings built directly into the standard library
 - My personal preference for parameterisable modules, ala Ocaml, over traits.

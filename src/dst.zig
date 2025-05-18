@@ -73,11 +73,11 @@ const os = struct {
             req: fs_req,
         ) !fs_res {
             switch (req) {
-                .create => |usr_data| {
+                .create => |ctx| {
                     try self.files.append(allocator, .{});
                     const fd = self.files.items.len;
                     self.stats.files_created += 1;
-                    return .{ .create = .{ .fd = fd, .usr_data = usr_data } };
+                    return .{ .create = .{ .fd = fd, .ctx = ctx } };
                 },
                 else => @panic("TODO: handle more events"),
             }
@@ -108,13 +108,13 @@ const usr = struct {
 
         fn on_stream_create_req_err(
             self: *@This(),
-            err: lib.CreateStreamReqErr,
+            err: lib.CreateTopicErr,
         ) void {
             switch (err) {
-                error.DuplicateStreamNameRequested => {
+                error.TopicNameAlreadyExists => {
                     self.stats.stream_name_duplicates += 1;
                 },
-                error.RequestedStreamNameOverflow => {
+                error.MaxTopics => {
                     self.stats.stream_name_reservation_limit_exceeded += 1;
                 },
             }
@@ -122,7 +122,7 @@ const usr = struct {
 
         pub fn send(self: *@This(), res: lib.URes) void {
             switch (res) {
-                .stream_created => {
+                .topic_created => {
                     self.stats.streams_created += 1;
                 },
             }

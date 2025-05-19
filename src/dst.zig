@@ -88,12 +88,12 @@ const os = struct {
         pub fn tick(
             self: *@This(),
             allocator: mem.Allocator,
-            db: *lib.DB(FD),
+            node: *lib.Node(FD),
             usr_ctx: *usr.Ctx,
         ) !void {
             const event = self.events.removeOrNull() orelse return;
             const res = try self.handle_req(allocator, event.req);
-            try db.receive_io(res, usr_ctx);
+            try node.receive_io(res, usr_ctx);
         }
     };
 };
@@ -120,7 +120,7 @@ const usr = struct {
             }
         }
 
-        pub fn send(self: *@This(), res: lib.URes) void {
+        pub fn send(self: *@This(), res: lib.Res) void {
             switch (res) {
                 .topic_created => {
                     self.stats.streams_created += 1;
@@ -162,11 +162,11 @@ const RandStreamNameGenerator = struct {
 };
 
 const Simulator = struct {
-    const DB = lib.DB(os.FD);
+    const Node = lib.Node(os.FD);
 
     rng: *std.Random,
     usr_ctx: usr.Ctx,
-    db: DB,
+    db: Node,
     os: os.OS,
     rsng: RandStreamNameGenerator,
     allocator: mem.Allocator,
@@ -175,7 +175,7 @@ const Simulator = struct {
         return .{
             .rng = rng,
             .usr_ctx = usr.Ctx.init(),
-            .db = try DB.init(allocator),
+            .db = try Node.init(allocator),
             .os = os.OS.init(allocator, rng),
             .rsng = try RandStreamNameGenerator.init(allocator, rng),
             .allocator = allocator,

@@ -18,14 +18,14 @@ const FileOps = enum { create, read, append, delete };
 pub fn fs_msg(comptime FD: type) type {
     return struct {
         pub const req = union(FileOps) {
-            create: ctx.create,
+            create: Ctx.create,
             read: struct { buf: std.ArrayList(u8), offset: usize },
             append: struct { fd: FD, payload: std.ArrayList(u8) },
             delete: struct { fd: FD },
         };
 
         pub const res = union(FileOps) {
-            create: struct { fd: FD, ctx: ctx.create },
+            create: struct { fd: FD, ctx: Ctx.create },
             read: struct {},
             append: struct {},
             delete: struct {},
@@ -34,9 +34,9 @@ pub fn fs_msg(comptime FD: type) type {
 }
 
 const topic = struct {
-    const id = enum(u6) { _ };
+    const ID = enum(u6) { _ };
 
-    const max_n = std.math.powi(u64, 2, @bitSizeOf(id)) catch |err| {
+    const max_n = std.math.powi(u64, 2, @bitSizeOf(ID)) catch |err| {
         @compileError(@errorName(err));
     };
 
@@ -47,9 +47,9 @@ const topic = struct {
 
 /// Higher level context given to lower level file system messages
 /// This is so we can associate CRAD operations with User operations
-const ctx = struct {
+const Ctx = struct {
     const create = union(enum) {
-        topic: struct { id: topic.id, _padding: u32 = 0 },
+        topic: struct { id: topic.ID, _padding: u32 = 0 },
     };
 
     // These are intended to be used in the user_data field of io_uring
@@ -86,7 +86,7 @@ const RequestedTopicNames = struct {
     fn add(
         self: *@This(),
         name: []const u8,
-    ) CreateTopicErr!topic.id {
+    ) CreateTopicErr!topic.ID {
         for (self.names) |existing_name| {
             if (mem.eql(u8, existing_name, name))
                 return error.TopicNameAlreadyExists;
@@ -104,7 +104,7 @@ const RequestedTopicNames = struct {
         return error.MaxTopics; // No free slots
     }
 
-    fn remove(self: *@This(), id: topic.id) []const u8 {
+    fn remove(self: *@This(), id: topic.ID) []const u8 {
         const idx = @intFromEnum(id);
         self.used_slots[idx] = 0;
         const removed = self.names[idx];
@@ -118,28 +118,28 @@ pub const CreateTopicErr = error{
     MaxTopics,
 };
 
-/// User Response
-pub const URes = union(enum) {
+/// Top Level Response, for the application
+pub const Res = union(enum) {
     topic_created: struct { name: []const u8 },
 };
 
-pub fn DB(comptime FD: type) type {
+pub fn Node(comptime FD: type) type {
     return struct {
-        reqd_topic_names: RequestedTopicNames,
+        rtns: RequestedTopicNames,
         /// Does not own the string keys
         topic_names_to_fds: StringHashMap(FD),
         allocator: mem.Allocator,
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .reqd_topic_names = try RequestedTopicNames.init(allocator),
+                .rtns = try RequestedTopicNames.init(allocator),
                 .topic_names_to_fds = .{},
                 .allocator = allocator,
             };
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.reqd_topic_names.deinit(allocator);
+            self.rtns.deinit(allocator);
             self.topic_names_to_fds.deinit(allocator);
         }
 
@@ -158,7 +158,7 @@ pub fn DB(comptime FD: type) type {
 
             const fs_req: fs_msg(FD).req = .{
                 .create = .{
-                    .topic = .{ .id = try self.reqd_topic_names.add(name) },
+                    .topic = .{ .id = try self.rtns.add(name) },
                 },
             };
 
@@ -175,7 +175,7 @@ pub fn DB(comptime FD: type) type {
                     switch (create.ctx) {
                         .topic => {
                             const topic_id = create.ctx.topic.id;
-                            const name = self.reqd_topic_names.remove(topic_id);
+                            const name = self.rtns.remove(topic_id);
                             const existing_name =
                                 try self.topic_names_to_fds.getOrPut(
                                     self.allocator,
@@ -183,7 +183,7 @@ pub fn DB(comptime FD: type) type {
                                 );
                             assert(!existing_name.found_existing);
                             existing_name.value_ptr.* = create.fd;
-                            break :blk URes{ .topic_created = .{ .name = name } };
+                            break :blk Res{ .topic_created = .{ .name = name } };
                         },
                     }
                 },

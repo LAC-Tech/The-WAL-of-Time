@@ -34,9 +34,15 @@ pub fn fs_msg(comptime FD: type) type {
 }
 
 const topic = struct {
-    const _backing_int = u6;
-    const id = enum(_backing_int) { _ };
-    const max_n = std.math.maxInt(_backing_int) + 1;
+    const id = enum(u6) { _ };
+
+    const max_n = std.math.powi(u64, 2, @bitSizeOf(id)) catch |err| {
+        @compileError(@errorName(err));
+    };
+
+    comptime {
+        assert(max_n == 64);
+    }
 };
 
 /// Higher level context given to lower level file system messages
@@ -119,22 +125,22 @@ pub const URes = union(enum) {
 
 pub fn DB(comptime FD: type) type {
     return struct {
-        rt_names: RequestedTopicNames,
+        reqd_topic_names: RequestedTopicNames,
         /// Does not own the string keys
-        topics: StringHashMap(FD),
+        topic_names_to_fds: StringHashMap(FD),
         allocator: mem.Allocator,
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .rt_names = try RequestedTopicNames.init(allocator),
-                .topics = .{},
+                .reqd_topic_names = try RequestedTopicNames.init(allocator),
+                .topic_names_to_fds = .{},
                 .allocator = allocator,
             };
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.rt_names.deinit(allocator);
-            self.topics.deinit(allocator);
+            self.reqd_topic_names.deinit(allocator);
+            self.topic_names_to_fds.deinit(allocator);
         }
 
         /// The topic name is raw bytes; focusing on linux first, and ext4
@@ -146,49 +152,43 @@ pub fn DB(comptime FD: type) type {
             name: []const u8,
             fs: anytype,
         ) !void {
-            // Cannot request the name of a stream we already have
-            if (self.topics.contains(name)) {
+            if (self.topic_names_to_fds.contains(name)) {
                 return error.TopicNameAlreadyExists;
             }
 
             const fs_req: fs_msg(FD).req = .{
                 .create = .{
-                    .topic = .{ .id = try self.rt_names.add(name) },
+                    .topic = .{ .id = try self.reqd_topic_names.add(name) },
                 },
             };
-            try fs.send(fs_req);
-        }
 
-        fn res_file_io_to_usr(
-            self: *@This(),
-            file_io_res: fs_msg(FD).res,
-        ) !URes {
-            switch (file_io_res) {
-                .create => |op| {
-                    switch (op.ctx) {
-                        .topic => {
-                            const name_idx = op.ctx.topic.id;
-                            const name = self.rt_names.remove(name_idx);
-                            const prev_val = try self.topics.getOrPut(
-                                self.allocator,
-                                name,
-                            );
-                            assert(!prev_val.found_existing);
-                            prev_val.value_ptr.* = op.fd;
-                            return URes{ .topic_created = .{ .name = name } };
-                        },
-                    }
-                },
-                else => @panic("TODO"),
-            }
+            try fs.send(fs_req);
         }
 
         pub fn receive_io(
             self: *@This(),
-            res: fs_msg(FD).res,
+            fs_res: fs_msg(FD).res,
             usr_ctx: anytype,
         ) !void {
-            const usr_res = try self.res_file_io_to_usr(res);
+            const usr_res = switch (fs_res) {
+                .create => |create| blk: {
+                    switch (create.ctx) {
+                        .topic => {
+                            const topic_id = create.ctx.topic.id;
+                            const name = self.reqd_topic_names.remove(topic_id);
+                            const existing_name =
+                                try self.topic_names_to_fds.getOrPut(
+                                    self.allocator,
+                                    name,
+                                );
+                            assert(!existing_name.found_existing);
+                            existing_name.value_ptr.* = create.fd;
+                            break :blk URes{ .topic_created = .{ .name = name } };
+                        },
+                    }
+                },
+                else => @panic("TODO"),
+            };
             usr_ctx.send(usr_res);
         }
     };

@@ -15,7 +15,7 @@ comptime {
 const FileOps = enum { create, read, append, delete };
 
 // Messages sent to an async file system with a req/res interface
-pub fn fs_msg(comptime FD: type) type {
+pub fn FsMsg(comptime FD: type) type {
     return struct {
         pub const req = union(FileOps) {
             create: Ctx.create,
@@ -147,7 +147,7 @@ pub fn Node(comptime FD: type) type {
         /// filenames are bytes, not a particular encoding.
         /// TODO: some way of translating this into the the platforms native
         /// filename format ie utf-8 for OS X, utf-16 for windows
-        pub fn create_stream(
+        pub fn create_topic(
             self: *@This(),
             name: []const u8,
             fs: anytype,
@@ -156,7 +156,7 @@ pub fn Node(comptime FD: type) type {
                 return error.TopicNameAlreadyExists;
             }
 
-            const fs_req: fs_msg(FD).req = .{
+            const fs_req: FsMsg(FD).req = .{
                 .create = .{
                     .topic = .{ .id = try self.rtns.add(name) },
                 },
@@ -167,7 +167,7 @@ pub fn Node(comptime FD: type) type {
 
         pub fn receive_io(
             self: *@This(),
-            fs_res: fs_msg(FD).res,
+            fs_res: FsMsg(FD).res,
             usr_ctx: anytype,
         ) !void {
             const usr_res = switch (fs_res) {
@@ -183,7 +183,9 @@ pub fn Node(comptime FD: type) type {
                                 );
                             assert(!existing_name.found_existing);
                             existing_name.value_ptr.* = create.fd;
-                            break :blk Res{ .topic_created = .{ .name = name } };
+                            break :blk Res{
+                                .topic_created = .{ .name = name },
+                            };
                         },
                     }
                 },

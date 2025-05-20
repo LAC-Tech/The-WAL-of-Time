@@ -29,7 +29,7 @@ const config = struct {
 
 const os = struct {
     const FD = usize;
-    const fs_msg = lib.fs_msg(FD);
+    const fs_msg = lib.FsMsg(FD);
     const fs_req = fs_msg.req;
     const fs_res = fs_msg.res;
     const Event = struct { priority: u64, req: fs_req };
@@ -191,7 +191,7 @@ const Simulator = struct {
     fn tick(self: *@This()) !void {
         if (config.create_stream_chance > self.rng.float(f64)) {
             if (self.rsng.get(self.rng)) |s| {
-                self.db.create_stream(s, &self.os) catch |err| {
+                self.db.create_topic(s, &self.os) catch |err| {
                     switch (err) {
                         error.OutOfMemory => return err,
                         else => |scre| {

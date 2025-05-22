@@ -123,6 +123,10 @@ pub const Res = union(enum) {
     topic_created: struct { name: []const u8 },
 };
 
+/// This structs job is to receive "completed" async fs events, and:
+/// 1 - update reflect changs to the node in memory and
+/// 2 - return a meaningful response for user code
+/// It's completey decoupled from any async runtime
 pub fn Node(comptime FD: type) type {
     return struct {
         rtns: RequestedTopicNames,
@@ -150,28 +154,30 @@ pub fn Node(comptime FD: type) type {
         pub fn create_topic(
             self: *@This(),
             name: []const u8,
-            fs: anytype,
-        ) !void {
+        ) !FsMsg(FD).req {
             if (self.topic_names_to_fds.contains(name)) {
                 return error.TopicNameAlreadyExists;
             }
 
-            const fs_req: FsMsg(FD).req = .{
+            return .{
                 .create = .{
                     .topic = .{ .id = try self.rtns.add(name) },
                 },
             };
-
-            try fs.send(fs_req);
         }
 
-        pub fn receive_io(
+        /// This turns internal DB and async io stuff into something relevant
+        /// to the end user.
+        /// It is one function, rather than one for each case, because I
+        /// envison the result of this having a single callback associated with
+        /// it in user code.
+        /// TODO: review these assumptions
+        pub fn receive_fs_res(
             self: *@This(),
             fs_res: FsMsg(FD).res,
-            usr_ctx: anytype,
-        ) !void {
-            const usr_res = switch (fs_res) {
-                .create => |create| blk: {
+        ) !Res {
+            switch (fs_res) {
+                .create => |create| {
                     switch (create.ctx) {
                         .topic => {
                             const topic_id = create.ctx.topic.id;
@@ -183,15 +189,14 @@ pub fn Node(comptime FD: type) type {
                                 );
                             assert(!existing_name.found_existing);
                             existing_name.value_ptr.* = create.fd;
-                            break :blk Res{
+                            return Res{
                                 .topic_created = .{ .name = name },
                             };
                         },
                     }
                 },
                 else => @panic("TODO"),
-            };
-            usr_ctx.send(usr_res);
+            }
         }
     };
 }

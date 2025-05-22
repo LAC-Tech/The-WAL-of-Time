@@ -93,7 +93,7 @@ const os = struct {
         ) !void {
             const event = self.events.removeOrNull() orelse return;
             const res = try self.handle_req(allocator, event.req);
-            try node.receive_io(res, usr_ctx);
+            usr_ctx.send(try node.receive_fs_res(res));
         }
     };
 };
@@ -166,7 +166,7 @@ const Simulator = struct {
 
     rng: *std.Random,
     usr_ctx: usr.Ctx,
-    db: Node,
+    node: Node,
     os: os.OS,
     rsng: RandStreamNameGenerator,
     allocator: mem.Allocator,
@@ -175,7 +175,7 @@ const Simulator = struct {
         return .{
             .rng = rng,
             .usr_ctx = usr.Ctx.init(),
-            .db = try Node.init(allocator),
+            .node = try Node.init(allocator),
             .os = os.OS.init(allocator, rng),
             .rsng = try RandStreamNameGenerator.init(allocator, rng),
             .allocator = allocator,
@@ -183,7 +183,7 @@ const Simulator = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self.db.deinit(self.allocator);
+        self.node.deinit(self.allocator);
         self.os.deinit(self.allocator);
         self.rsng.deinit(self.allocator);
     }
@@ -191,18 +191,16 @@ const Simulator = struct {
     fn tick(self: *@This()) !void {
         if (config.create_stream_chance > self.rng.float(f64)) {
             if (self.rsng.get(self.rng)) |s| {
-                self.db.create_topic(s, &self.os) catch |err| {
-                    switch (err) {
-                        error.OutOfMemory => return err,
-                        else => |scre| {
-                            self.usr_ctx.on_stream_create_req_err(scre);
-                        },
-                    }
+                const fs_req = self.node.create_topic(s) catch |err| {
+                    self.usr_ctx.on_stream_create_req_err(err);
+                    return;
                 };
+
+                try self.os.send(fs_req);
             }
         }
         if (config.advance_os_chance > self.rng.float(f64)) {
-            try self.os.tick(self.allocator, &self.db, &self.usr_ctx);
+            try self.os.tick(self.allocator, &self.node, &self.usr_ctx);
         }
     }
 

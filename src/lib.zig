@@ -24,6 +24,8 @@ pub fn FsMsg(comptime FD: type) type {
             delete: struct { fd: FD },
         };
 
+        // TODO: this has to fit in 64 bits!!!
+        // io_uring_cqe does not mention the syscall, only the result
         pub const res = union(FileOps) {
             create: struct { fd: FD, ctx: Ctx.create },
             read: struct {},

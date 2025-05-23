@@ -93,7 +93,7 @@ const os = struct {
         ) !void {
             const event = self.events.removeOrNull() orelse return;
             const res = try self.handle_req(allocator, event.req);
-            usr_ctx.send(try node.receive_fs_res(res));
+            usr_ctx.send(try node.res_fs_to_usr(res));
         }
     };
 };
@@ -112,18 +112,18 @@ const usr = struct {
         ) void {
             switch (err) {
                 error.TopicNameAlreadyExists => {
-                    self.stats.stream_name_duplicates += 1;
+                    self.stats.topic_name_duplicates += 1;
                 },
                 error.MaxTopics => {
-                    self.stats.stream_name_reservation_limit_exceeded += 1;
+                    self.stats.topic_name_reservation_limit_exceeded += 1;
                 },
             }
         }
 
-        pub fn send(self: *@This(), res: lib.Res) void {
+        pub fn send(self: *@This(), res: lib.Usr.Res) void {
             switch (res) {
-                .topic_created => {
-                    self.stats.streams_created += 1;
+                .topic_create => {
+                    self.stats.topics_created += 1;
                 },
             }
         }
@@ -191,7 +191,8 @@ const Simulator = struct {
     fn tick(self: *@This()) !void {
         if (config.create_stream_chance > self.rng.float(f64)) {
             if (self.rsng.get(self.rng)) |s| {
-                const fs_req = self.node.create_topic(s) catch |err| {
+                const usr_req = lib.Usr.Req{ .topic_create = .{ .name = s } };
+                const fs_req = self.node.req_usr_to_fs(usr_req) catch |err| {
                     self.usr_ctx.on_stream_create_req_err(err);
                     return;
                 };

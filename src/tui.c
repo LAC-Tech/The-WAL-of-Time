@@ -96,19 +96,19 @@ bool tui_tick(
             2, 
             x_offset, 
             "%08lx",
-            usr_stats->streams_created);
+            usr_stats->topics_created);
     mvwprintw(
             tui->stats_win,
             3,
             x_offset,
             "%08lx",
-            usr_stats->stream_name_duplicates);
+            usr_stats->topic_name_duplicates);
     mvwprintw(
             tui->stats_win, 
             4, 
             x_offset, 
             "%08lx",
-            usr_stats->stream_name_reservation_limit_exceeded);
+            usr_stats->topic_name_reservation_limit_exceeded);
     mvwprintw(tui->stats_win, 6, x_offset, "%08lx", os_stats->files_created);
     wrefresh(tui->stats_win);
     wrefresh(tui->title_win);

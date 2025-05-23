@@ -28,9 +28,9 @@ typedef struct {
 } os_stats;
 
 typedef struct {
-    uint64_t streams_created;
-    uint64_t stream_name_duplicates;
-    uint64_t stream_name_reservation_limit_exceeded;
+    uint64_t topics_created;
+    uint64_t topic_name_duplicates;
+    uint64_t topic_name_reservation_limit_exceeded;
 } usr_stats;
 
 void tui_init(tui* ctx);

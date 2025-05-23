@@ -35,6 +35,19 @@ pub fn FsMsg(comptime FD: type) type {
     };
 }
 
+/// Top Level Response, for the application
+pub const Usr = struct {
+    const Op = enum { topic_create };
+
+    pub const Req = union(Op) {
+        topic_create: struct { name: []const u8 },
+    };
+
+    pub const Res = union(Op) {
+        topic_create: struct { name: []const u8 },
+    };
+};
+
 const topic = struct {
     const ID = enum(u6) { _ };
 
@@ -120,11 +133,6 @@ pub const CreateTopicErr = error{
     MaxTopics,
 };
 
-/// Top Level Response, for the application
-pub const Res = union(enum) {
-    topic_created: struct { name: []const u8 },
-};
-
 /// This structs job is to receive "completed" async fs events, and:
 /// 1 - update reflect changs to the node in memory and
 /// 2 - return a meaningful response for user code
@@ -153,19 +161,23 @@ pub fn Node(comptime FD: type) type {
         /// filenames are bytes, not a particular encoding.
         /// TODO: some way of translating this into the the platforms native
         /// filename format ie utf-8 for OS X, utf-16 for windows
-        pub fn create_topic(
+        pub fn req_usr_to_fs(
             self: *@This(),
-            name: []const u8,
+            usr_req: Usr.Req,
         ) !FsMsg(FD).req {
-            if (self.topic_names_to_fds.contains(name)) {
-                return error.TopicNameAlreadyExists;
-            }
+            switch (usr_req) {
+                .topic_create => |tc| {
+                    if (self.topic_names_to_fds.contains(tc.name)) {
+                        return error.TopicNameAlreadyExists;
+                    }
 
-            return .{
-                .create = .{
-                    .topic = .{ .id = try self.rtns.add(name) },
+                    return .{
+                        .create = .{
+                            .topic = .{ .id = try self.rtns.add(tc.name) },
+                        },
+                    };
                 },
-            };
+            }
         }
 
         /// This turns internal DB and async io stuff into something relevant
@@ -174,10 +186,10 @@ pub fn Node(comptime FD: type) type {
         /// envison the result of this having a single callback associated with
         /// it in user code.
         /// TODO: review these assumptions
-        pub fn receive_fs_res(
+        pub fn res_fs_to_usr(
             self: *@This(),
             fs_res: FsMsg(FD).res,
-        ) !Res {
+        ) !Usr.Res {
             switch (fs_res) {
                 .create => |create| {
                     switch (create.ctx) {
@@ -191,8 +203,8 @@ pub fn Node(comptime FD: type) type {
                                 );
                             assert(!existing_name.found_existing);
                             existing_name.value_ptr.* = create.fd;
-                            return Res{
-                                .topic_created = .{ .name = name },
+                            return Usr.Res{
+                                .topic_create = .{ .name = name },
                             };
                         },
                     }

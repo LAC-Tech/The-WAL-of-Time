@@ -4,7 +4,7 @@ extern crate alloc;
 use core::mem;
 
 use foldhash::fast::FixedState;
-use hashbrown::{HashMap, hash_map};
+use hashbrown::{HashMap, hash_map::Entry};
 
 // Kqueue's udata and io_uring's user_data are a void* and _u64 respectively
 const _: () = assert!(mem::size_of::<*mut core::ffi::c_void>() == 8);
@@ -98,12 +98,12 @@ mod topic {
 /// 1 - update reflect changs to the node in memory and
 /// 2 - return a meaningful response for user code
 /// It's completey decoupled from any async runtime
-pub struct Node<'a, FD> {
+pub struct Core<'a, FD> {
     reqd_topic_names: topic::RequestedNames<'a>,
     topic_fds: HashMap<&'a [u8], FD, FixedState>, // Deterministic Hashmap
 }
 
-impl<'a, FD> Node<'a, FD> {
+impl<'a, FD> Core<'a, FD> {
     pub fn new(seed: u64) -> Self {
         Self {
             reqd_topic_names: topic::RequestedNames::new(),
@@ -126,7 +126,6 @@ impl<'a, FD> Node<'a, FD> {
                 }
 
                 let topic_id = self.reqd_topic_names.add(name)?;
-
                 Ok(fs::Req::Create { topic_id })
             }
         }
@@ -143,10 +142,10 @@ impl<'a, FD> Node<'a, FD> {
             fs::Res::Create { fd, topic_id } => {
                 let name = self.reqd_topic_names.remove(topic_id);
                 match self.topic_fds.entry(name) {
-                    hash_map::Entry::Vacant(entry) => {
+                    Entry::Vacant(entry) => {
                         entry.insert(fd);
                     }
-                    hash_map::Entry::Occupied(_) => {
+                    Entry::Occupied(_) => {
                         panic!("failed to reserve topic name")
                     }
                 }
@@ -154,4 +153,16 @@ impl<'a, FD> Node<'a, FD> {
             }
         }
     }
+}
+
+struct Node;
+
+impl Node {
+    fn topic_create() { panic!("TODO") }
+    fn topic_delete() { panic!("TODO") }
+    fn events_read() { panic!("TODO") }
+    fn local_events_append() { panic!("TODO") }
+    fn remote_events_append() { panic!("TODO") }
+
+    fn on_usr_res(handler: impl Fn(usr::Res)) { panic!("TODO") }
 }

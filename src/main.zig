@@ -4,8 +4,6 @@ const posix = std.posix;
 const linux = std.os.linux;
 const debug = std.debug;
 
-const UsrData = enum(u64) { accept };
-
 pub fn main() !void {
     var ring = try linux.IoUring.init(32, 0);
     defer ring.deinit();
@@ -33,7 +31,7 @@ pub fn main() !void {
     try posix.listen(socket_fd, backlog);
 
     _ = try ring.accept(
-        @intFromEnum(UsrData.accept),
+        @intFromEnum(core.UsrData.connect),
         socket_fd,
         &addr.any,
         &addr_len,
@@ -42,26 +40,26 @@ pub fn main() !void {
 
     debug.assert(try ring.submit() == 1);
 
-    debug.print("about to run loop\n", .{});
+    debug.print("The WAL weaves as the WAL wills\n", .{});
 
     while (true) {
         const cqe = try ring.copy_cqe();
 
         const err = cqe.err();
         if (err != .SUCCESS) {
-            std.debug.print("CQE Err: {}\n", .{err});
+            debug.print("CQE Err: {}\n", .{err});
         }
 
-        const usr_data: UsrData = @enumFromInt(cqe.user_data);
+        const usr_data: core.UsrData = @enumFromInt(cqe.user_data);
 
         switch (usr_data) {
-            .accept => {
+            .connect => {
                 debug.print("accept received \n", .{});
                 //const client_fd = cqe.res;
                 //posix.close(client_fd);
 
                 _ = try ring.accept(
-                    @intFromEnum(UsrData.accept),
+                    @intFromEnum(core.UsrData.connect),
                     socket_fd,
                     &addr.any,
                     &addr_len,
@@ -80,3 +78,7 @@ pub fn main() !void {
 // - SlotMap so we can have client ids pointing to socket fds
 // - Zig client, which is a repl
 // - inner loop that batch processes all ready CQE events, like TB blog
+
+const core = struct {
+    const UsrData = enum(u64) { connect };
+};

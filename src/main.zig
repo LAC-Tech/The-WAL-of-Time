@@ -18,10 +18,13 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const recv_buf = try allocator.alloc(u8, core.write_buf_size);
-    //var read_buf = try allocator.alloc(u8, core.write_buf_size);
 
-    _ = try async_io.accept(.client_connected, &server);
-    debug.assert(try async_io.flush() == 1);
+    var client_fd: posix.fd_t = -1;
+
+    for (0..core.max_clients) |_| {
+        _ = try async_io.accept(.client_connected, &server);
+    }
+    debug.assert(try async_io.flush() == core.max_clients);
 
     debug.print("The WAL weaves as the WAL wills\n", .{});
 
@@ -31,34 +34,25 @@ pub fn main() !void {
 
         switch (usr_data) {
             .client_connected => {
-                const client_fd = cqe.res;
-
-                // Replace itself on the queue
+                client_fd = cqe.res;
+                // Replace itself on the queue, so other clients can connect
                 _ = try async_io.accept(.client_connected, &server);
 
-                _ = try async_io.ring.recv(
-                    @intFromEnum(core.UsrData.client_ready),
-                    client_fd,
-                    .{ .buffer = recv_buf },
-                    0,
-                );
+                // Let client know they can connect.
+                _ = try async_io.send(.client_ready, client_fd, "connection acknowledged\n");
 
-                //_ = try ring.recv(@intFromEnum(core.UsrData.client_ready)
-
-                // TODO: wait until the recv has come through to do this
-
-                // TODO: "recv" here, so that this client can send us data
-
-                _ = try async_io.ring.submit();
+                _ = try async_io.flush();
             },
             .client_ready => {
-                //_ = try ring.send(
-                //    @intFromEnum(core.UsrData.todo),
-                //    client_fd,
-                //    "connection acknowledged\n",
-                //    0,
-                //);
-
+                @memset(recv_buf, 0);
+                // so we can receive a message
+                _ = try async_io.recv(.client_msg, client_fd, recv_buf);
+                _ = try async_io.flush();
+            },
+            .client_msg => {
+                debug.print("received: {s}", .{recv_buf});
+                // So we can receive more messages
+                _ = try async_io.recv(.client_msg, client_fd, recv_buf);
                 _ = try async_io.flush();
             },
         }
@@ -90,6 +84,29 @@ const AsyncIO = struct {
             server.socket_fd,
             &server.addr.any,
             &server.addr_len,
+            0,
+        );
+    }
+
+    fn recv(self: *@This(), usr_data: core.UsrData, client_fd: posix.fd_t, buf: []u8) !void {
+        _ = try self.ring.recv(
+            @intFromEnum(usr_data),
+            client_fd,
+            .{ .buffer = buf },
+            0,
+        );
+    }
+
+    fn send(
+        self: *@This(),
+        usr_data: core.UsrData,
+        client_fd: posix.fd_t,
+        buf: []const u8,
+    ) !void {
+        _ = try self.ring.send(
+            @intFromEnum(usr_data),
+            client_fd,
+            buf,
             0,
         );
     }
@@ -155,13 +172,13 @@ const Server = struct {
 // - SlotMap so we can have client ids pointing to socket fds
 // - Zig client, which is a repl
 // - inner loop that batch processes all ready CQE events, like TB blog
-
 const core = struct {
-    const UsrData = enum(u64) { client_connected, client_ready };
+    const UsrData = enum(u64) { client_connected, client_ready, client_msg };
     comptime {
         debug.assert(8 == @sizeOf(UsrData));
     }
 
+    const max_clients = 1; // TODO: more
     const write_buf_size = 64;
 
     const max_slots: usize = 64;

@@ -19,10 +19,10 @@ pub fn main() !void {
 
     const recv_buf = try allocator.alloc(u8, core.write_buf_size);
 
-    var client_fd: posix.fd_t = -1;
+    var client_fds = core.SlotMap(posix.fd_t, 1).init(allocator);
 
     for (0..core.max_clients) |_| {
-        _ = try async_io.accept(.client_connected, &server);
+        _ = try async_io.accept(.{ .client_connected = .{ ._padding = 0 } }, &server);
     }
     debug.assert(try async_io.flush() == core.max_clients);
 
@@ -30,28 +30,36 @@ pub fn main() !void {
 
     while (true) {
         const cqe = try async_io.wait_for_res();
-        const usr_data: core.UsrData = @enumFromInt(cqe.user_data);
+        const usr_data: core.UsrData = @bitCast(cqe.user_data);
 
         switch (usr_data) {
             .client_connected => {
-                client_fd = cqe.res;
+                const client_fd = cqe.res;
+                const client_slot = client_fds.add(client_fd);
                 // Replace itself on the queue, so other clients can connect
                 _ = try async_io.accept(.client_connected, &server);
 
                 // Let client know they can connect.
-                _ = try async_io.send(.client_ready, client_fd, "connection acknowledged\n");
+                _ = try async_io.send(
+                    .{ .client_ready = .{ .client_slot = client_slot } },
+                    client_fd,
+                    "connection acknowledged\n",
+                );
 
                 _ = try async_io.flush();
             },
-            .client_ready => {
-                @memset(recv_buf, 0);
+            .client_ready => |cr| {
                 // so we can receive a message
+                const client_fd = client_fds.get(cr.client_slot);
                 _ = try async_io.recv(.client_msg, client_fd, recv_buf);
+
                 _ = try async_io.flush();
             },
-            .client_msg => {
+            .client_msg => |cr| {
                 debug.print("received: {s}", .{recv_buf});
+                @memset(recv_buf, 0);
                 // So we can receive more messages
+                const client_fd = client_fds.get(cr.client_slot);
                 _ = try async_io.recv(.client_msg, client_fd, recv_buf);
                 _ = try async_io.flush();
             },
@@ -80,7 +88,7 @@ const AsyncIO = struct {
         server: *Server,
     ) !void {
         _ = try self.ring.accept(
-            @intFromEnum(usr_data),
+            @bitCast(usr_data),
             server.socket_fd,
             &server.addr.any,
             &server.addr_len,
@@ -88,9 +96,14 @@ const AsyncIO = struct {
         );
     }
 
-    fn recv(self: *@This(), usr_data: core.UsrData, client_fd: posix.fd_t, buf: []u8) !void {
+    fn recv(
+        self: *@This(),
+        usr_data: core.UsrData,
+        client_fd: posix.fd_t,
+        buf: []u8,
+    ) !void {
         _ = try self.ring.recv(
-            @intFromEnum(usr_data),
+            @bitCast(usr_data),
             client_fd,
             .{ .buffer = buf },
             0,
@@ -173,7 +186,14 @@ const Server = struct {
 // - Zig client, which is a repl
 // - inner loop that batch processes all ready CQE events, like TB blog
 const core = struct {
-    const UsrData = enum(u64) { client_connected, client_ready, client_msg };
+    const UsrDataTag = enum(u8) { client_connected, client_ready, client_msg };
+
+    const UsrData = union(UsrDataTag) {
+        client_connected: packed struct { _padding: u32 },
+        client_ready: packed struct { client_slot: u8 },
+        client_msg: packed struct { client_slot: u8 },
+    };
+
     comptime {
         debug.assert(8 == @sizeOf(UsrData));
     }
@@ -181,21 +201,19 @@ const core = struct {
     const max_clients = 1; // TODO: more
     const write_buf_size = 64;
 
-    const max_slots: usize = 64;
-
     pub const CreateSlotErr = error{
         ValAlreadyExists,
         MaxVals,
     };
 
-    fn SlotMap(comptime T: type) type {
+    fn SlotMap(comptime T: type, comptime max_slots: usize) type {
         return struct {
-            vals: [max_slots]T,
+            vals: []T,
             used_slots: [max_slots]u1,
 
             fn init(allocator: std.mem.Allocator) !@This() {
                 return .{
-                    .vals = try allocator.create([max_slots]T),
+                    .vals = try allocator.alloc(T, max_slots),
                     .used_slots = [_]u1{0} ** max_slots,
                 };
             }
@@ -204,13 +222,14 @@ const core = struct {
                 allocator.free(self.vals);
             }
 
-            /// Index if it succeeds, None if it's a duplicate
             fn add(
                 self: *@This(),
-                val: []const u8,
+                val: T,
             ) CreateSlotErr!u8 {
                 for (self.names) |existing_name| {
-                    if (mem.eql(u8, existing_name, val))
+                    // TODO: mem.eql not appropriate for all values of T..
+                    // Provide ctx struct like Zig stad library does for hashmap
+                    if (mem.eql(T, existing_name, val))
                         return error.ValAlreadyExists;
                 }
 
@@ -224,6 +243,14 @@ const core = struct {
                 }
 
                 return error.MaxTopics; // No free slots
+            }
+
+            fn get(self: @This(), slot: u8) ?T {
+                if (self.used_slots[slot] == 1) {
+                    return self.vals[slot];
+                } else {
+                    return null;
+                }
             }
 
             fn remove(self: *@This(), slot: u8) T {

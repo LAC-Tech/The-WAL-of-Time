@@ -18,15 +18,8 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // TODO: one of these per client? pretty sure they could be overwritten
-    const recv_buf = try allocator.alloc(u8, core.write_buf_size);
-    @memset(recv_buf, 0); // Zig has no calloc equivalent I can see
-
-    var client_fds = try core.SlotMap(
-        posix.fd_t,
-        core.max_clients,
-        posix.fd_eql,
-    ).init(allocator);
+    var c = try core.Core(posix.fd_t, posix.fd_eql).init(allocator);
+    defer c.deinit(allocator);
 
     for (0..core.max_clients) |_| {
         _ = try async_io.accept(
@@ -45,7 +38,7 @@ pub fn main() !void {
         switch (usr_data.tag) {
             .client_connected => {
                 const client_fd = cqe.res;
-                const client_slot = try client_fds.add(client_fd);
+                const client_slot = try c.client_fds.add(client_fd);
                 // Replace itself on the queue, so other clients can connect
                 _ = try async_io.accept(core.UsrData.client_connected, &server);
 
@@ -61,30 +54,31 @@ pub fn main() !void {
             .client_ready => {
                 const client_slot = usr_data.payload.client_slot;
                 // so we can receive a message
-                const client_fd = client_fds.get(client_slot) orelse {
+                const client_fd = c.client_fds.get(client_slot) orelse {
                     @panic("expect to have a client fd here");
                 };
                 _ = try async_io.recv(
                     core.UsrData.client_msg(client_slot),
                     client_fd,
-                    recv_buf,
+                    c.recv_buf,
                 );
 
                 _ = try async_io.flush();
             },
             .client_msg => {
                 const client_slot = usr_data.payload.client_slot;
-                debug.print("received: {s}", .{recv_buf});
-                @memset(recv_buf, 0);
+                debug.print("received: {s}", .{c.recv_buf});
+                @memset(c.recv_buf, 0);
 
                 // So we can receive more messages
-                const client_fd = client_fds.get(client_slot) orelse {
+                const client_fd = c.client_fds.get(client_slot) orelse {
                     @panic("expect to have a client fd here");
                 };
+
                 _ = try async_io.recv(
                     core.UsrData.client_msg(client_slot),
                     client_fd,
-                    recv_buf,
+                    c.recv_buf,
                 );
 
                 _ = try async_io.flush();
@@ -94,11 +88,9 @@ pub fn main() !void {
 }
 
 // TODO:
-// - Pre-populate queue with N accept requests. As each is used, add another
-// - 64 bit UserData that tells the type of the request
-// - SlotMap so we can have client ids pointing to socket fds
-// - Zig client, which is a repl
-// - inner loop that batch processes all ready CQE events, like TB blog
+// - make this a comptime function making FD
+// - then make structs like recv args, send args etc.
+// - then just write methods that return them, and send those to async_io
 const core = struct {
     // Zig tagged unions can't be bitcast.
     // They're Go programmers and they don't know any better
@@ -134,6 +126,29 @@ const core = struct {
 
     comptime {
         debug.assert(8 == @sizeOf(UsrData));
+    }
+
+    fn Core(comptime FD: type, comptime fd_eql: fn (FD, FD) bool) type {
+        const ClientFDs = SlotMap(FD, max_clients, fd_eql);
+        return struct {
+            client_fds: ClientFDs,
+            recv_buf: []u8,
+
+            fn init(allocator: mem.Allocator) !@This() {
+                // TODO: one of these per client?  they can be overwritten
+                const recv_buf = try allocator.alloc(u8, core.write_buf_size);
+                @memset(recv_buf, 0); // Zig has no calloc equivalent
+
+                return .{
+                    .client_fds = try ClientFDs.init(allocator),
+                    .recv_buf = recv_buf,
+                };
+            }
+
+            fn deinit(self: *@This(), allocator: mem.Allocator) void {
+                self.client_fds.deinit(allocator);
+            }
+        };
     }
 
     const max_clients = 2; // TODO: more

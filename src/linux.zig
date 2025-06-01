@@ -1,16 +1,17 @@
 const std = @import("std");
+const linux = std.os.linux;
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
-    ring: std.os.linux.IoUring,
+    ring: linux.IoUring,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
         // memory locked by the process. Setting this too high risks overflowing
         // non-root process limits." - Joran
         const entries = 128;
-        return .{ .ring = try std.os.linux.IoUring.init(entries, 0) };
+        return .{ .ring = try linux.IoUring.init(entries, 0) };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -32,8 +33,8 @@ pub const AsyncIO = struct {
         usr_data: u64,
         client_fd: std.posix.fd_t,
         buf: []u8,
-    ) !void {
-        _ = try self.ring.recv(usr_data, client_fd, .{ .buffer = buf }, 0);
+    ) !*linux.io_uring_sqe {
+        return self.ring.recv(usr_data, client_fd, .{ .buffer = buf }, 0);
     }
 
     pub fn send(
@@ -41,8 +42,8 @@ pub const AsyncIO = struct {
         usr_data: u64,
         client_fd: std.posix.fd_t,
         buf: []const u8,
-    ) !void {
-        _ = try self.ring.send(usr_data, client_fd, buf, 0);
+    ) !*linux.io_uring_sqe {
+        return self.ring.send(usr_data, client_fd, buf, 0);
     }
 
     /// Number of entries submitted
@@ -50,7 +51,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !std.os.linux.io_uring_cqe {
+    pub fn wait_for_res(self: *@This()) !linux.io_uring_cqe {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();

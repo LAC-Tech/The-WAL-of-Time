@@ -17,6 +17,7 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    // TODO: one of these per client? pretty sure they could be overwritten
     const recv_buf = try allocator.alloc(u8, core.write_buf_size);
     @memset(recv_buf, 0); // Zig has no calloc equivalent I can see
 
@@ -238,7 +239,7 @@ const core = struct {
         debug.assert(8 == @sizeOf(UsrData));
     }
 
-    const max_clients = 1; // TODO: more
+    const max_clients = 2; // TODO: more
     const write_buf_size = 64;
 
     pub const CreateSlotErr = error{

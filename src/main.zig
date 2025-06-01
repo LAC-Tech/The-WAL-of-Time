@@ -18,11 +18,19 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const recv_buf = try allocator.alloc(u8, core.write_buf_size);
+    @memset(recv_buf, 0); // Zig has no calloc equivalent I can see
 
-    var client_fds = core.SlotMap(posix.fd_t, 1).init(allocator);
+    var client_fds = try core.SlotMap(
+        posix.fd_t,
+        core.max_clients,
+        posix_fd_eql,
+    ).init(allocator);
 
     for (0..core.max_clients) |_| {
-        _ = try async_io.accept(.{ .client_connected = .{ ._padding = 0 } }, &server);
+        _ = try async_io.accept(
+            @bitCast(core.UsrData.client_connected),
+            &server,
+        );
     }
     debug.assert(try async_io.flush() == core.max_clients);
 
@@ -32,41 +40,63 @@ pub fn main() !void {
         const cqe = try async_io.wait_for_res();
         const usr_data: core.UsrData = @bitCast(cqe.user_data);
 
-        switch (usr_data) {
+        switch (usr_data.tag) {
             .client_connected => {
                 const client_fd = cqe.res;
-                const client_slot = client_fds.add(client_fd);
+                const client_slot = try client_fds.add(client_fd);
                 // Replace itself on the queue, so other clients can connect
-                _ = try async_io.accept(.client_connected, &server);
+                _ = try async_io.accept(core.UsrData.client_connected, &server);
 
                 // Let client know they can connect.
                 _ = try async_io.send(
-                    .{ .client_ready = .{ .client_slot = client_slot } },
+                    core.UsrData.client_ready(client_slot),
                     client_fd,
                     "connection acknowledged\n",
                 );
 
                 _ = try async_io.flush();
             },
-            .client_ready => |cr| {
+            .client_ready => {
+                const client_slot = usr_data.payload.client_slot;
                 // so we can receive a message
-                const client_fd = client_fds.get(cr.client_slot);
-                _ = try async_io.recv(.client_msg, client_fd, recv_buf);
+                const client_fd = client_fds.get(client_slot) orelse {
+                    @panic("expect to have a client fd here");
+                };
+                _ = try async_io.recv(
+                    core.UsrData.client_msg(client_slot),
+                    client_fd,
+                    recv_buf,
+                );
 
                 _ = try async_io.flush();
             },
-            .client_msg => |cr| {
+            .client_msg => {
+                const client_slot = usr_data.payload.client_slot;
                 debug.print("received: {s}", .{recv_buf});
                 @memset(recv_buf, 0);
+
                 // So we can receive more messages
-                const client_fd = client_fds.get(cr.client_slot);
-                _ = try async_io.recv(.client_msg, client_fd, recv_buf);
+                const client_fd = client_fds.get(client_slot) orelse {
+                    @panic("expect to have a client fd here");
+                };
+                _ = try async_io.recv(
+                    core.UsrData.client_msg(client_slot),
+                    client_fd,
+                    recv_buf,
+                );
+
                 _ = try async_io.flush();
             },
         }
     }
 }
 
+fn posix_fd_eql(a: posix.fd_t, b: posix.fd_t) bool {
+    return a == b;
+}
+
+// Almost pointlessly thin wrapper: the point is to be replaceable with a
+// deterministic version
 const AsyncIO = struct {
     ring: linux.IoUring,
 
@@ -82,11 +112,7 @@ const AsyncIO = struct {
         self.ring.deinit();
     }
 
-    fn accept(
-        self: *@This(),
-        usr_data: core.UsrData,
-        server: *Server,
-    ) !void {
+    fn accept(self: *@This(), usr_data: u64, server: *Server) !void {
         _ = try self.ring.accept(
             @bitCast(usr_data),
             server.socket_fd,
@@ -98,30 +124,20 @@ const AsyncIO = struct {
 
     fn recv(
         self: *@This(),
-        usr_data: core.UsrData,
+        usr_data: u64,
         client_fd: posix.fd_t,
         buf: []u8,
     ) !void {
-        _ = try self.ring.recv(
-            @bitCast(usr_data),
-            client_fd,
-            .{ .buffer = buf },
-            0,
-        );
+        _ = try self.ring.recv(usr_data, client_fd, .{ .buffer = buf }, 0);
     }
 
     fn send(
         self: *@This(),
-        usr_data: core.UsrData,
+        usr_data: u64,
         client_fd: posix.fd_t,
         buf: []const u8,
     ) !void {
-        _ = try self.ring.send(
-            @intFromEnum(usr_data),
-            client_fd,
-            buf,
-            0,
-        );
+        _ = try self.ring.send(usr_data, client_fd, buf, 0);
     }
 
     /// Number of entries submitted
@@ -186,12 +202,36 @@ const Server = struct {
 // - Zig client, which is a repl
 // - inner loop that batch processes all ready CQE events, like TB blog
 const core = struct {
-    const UsrDataTag = enum(u8) { client_connected, client_ready, client_msg };
+    // Zig tagged unions can't be bitcast.
+    // They're Go programmers and they don't know any better
+    // So we hack it together like C
+    const UsrData = packed struct(u64) {
+        tag: enum(u8) { client_connected, client_ready, client_msg },
+        payload: packed union { client_slot: u8 },
+        _padding: u48 = 0,
 
-    const UsrData = union(UsrDataTag) {
-        client_connected: packed struct { _padding: u32 },
-        client_ready: packed struct { client_slot: u8 },
-        client_msg: packed struct { client_slot: u8 },
+        const client_connected: u64 = @bitCast(@This(){
+            .tag = .client_connected,
+            .payload = undefined,
+        });
+
+        fn client_ready(client_slot: u8) u64 {
+            const result = @This(){
+                .tag = .client_ready,
+                .payload = .{ .client_slot = client_slot },
+            };
+
+            return @bitCast(result);
+        }
+
+        fn client_msg(client_slot: u8) u64 {
+            const result = @This(){
+                .tag = .client_msg,
+                .payload = .{ .client_slot = client_slot },
+            };
+
+            return @bitCast(result);
+        }
     };
 
     comptime {
@@ -206,7 +246,13 @@ const core = struct {
         MaxVals,
     };
 
-    fn SlotMap(comptime T: type, comptime max_slots: usize) type {
+    fn SlotMap(
+        comptime T: type,
+        comptime max_slots: usize,
+        /// Context must be a struct type with one member function:
+        /// eql(self, T, T) bool
+        comptime eql: fn (T, T) bool,
+    ) type {
         return struct {
             vals: []T,
             used_slots: [max_slots]u1,
@@ -226,23 +272,21 @@ const core = struct {
                 self: *@This(),
                 val: T,
             ) CreateSlotErr!u8 {
-                for (self.names) |existing_name| {
-                    // TODO: mem.eql not appropriate for all values of T..
-                    // Provide ctx struct like Zig stad library does for hashmap
-                    if (mem.eql(T, existing_name, val))
+                for (self.vals) |existing| {
+                    if (eql(existing, val))
                         return error.ValAlreadyExists;
                 }
 
                 // Find first free slot
-                for (self.used_slots, 0..) |slot, idx| {
+                for (self.used_slots, 0..max_slots) |slot, idx| {
                     if (slot == 0) { // Free slot found
                         self.used_slots[idx] = 1;
-                        self.names[idx] = val;
-                        return @enumFromInt(idx);
+                        self.vals[idx] = val;
+                        return @intCast(idx);
                     }
                 }
 
-                return error.MaxTopics; // No free slots
+                return error.MaxVals; // No free slots
             }
 
             fn get(self: @This(), slot: u8) ?T {
@@ -261,46 +305,4 @@ const core = struct {
             }
         };
     }
-
-    //// This determines
-    //// - number of initial accept requests
-    //// - number of receive requests
-    //// -
-    //const max_clients = 8; // TODO: think about this number more
-
-    //const n_recv_entries: usize = 8;
-    //const max_msg_size: usize = 4096; // TODO: find a proper value for this
-
-    //// Events that are dispatched to io_uring need places to read and write to.
-    //// I'm just pre-allocating the maximum amount I can use, all at once.
-    //fn Buffers(comptime n_buckets: usize, comptime bucket_size: usize) type {
-    //    const Borrowed = struct {
-    //        slot: usize,
-    //        buffer: []u8,
-    //    };
-
-    //    return struct {
-    //        lens: [n_buckets] usize,
-    //        occupied: [n_buckets] u1,
-    //        backing_bytes: [n_buckets * bucket_size]u8,
-
-    //        fn init(allocator: std.mem.Allocator) !@This() {
-    //            return .{
-    //                .lens = try allocator.alloc(usize, n_buckets),
-    //                .occupied = try allocator.alloc(u1, n_buckets),
-    //            };
-    //        }
-
-    //        fn get_buf(self: *@This()) ![]u8 {
-    //            for (self.occupied, 0..) |o, i| {
-    //                if (o) {
-    //                    continue;
-    //                }
-
-    //                self.occupied[i] = 1;
-    //                return self.backing_bytes[i];
-    //            }
-    //        }
-    //    };
-    //}
 };

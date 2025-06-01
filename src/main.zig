@@ -88,7 +88,7 @@ pub fn main() !void {
 }
 
 // TODO:
-// - make this a comptime function making FD
+// - make this a comptime function that takes FD
 // - then make structs like recv args, send args etc.
 // - then just write methods that return them, and send those to async_io
 const core = struct {

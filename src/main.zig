@@ -10,7 +10,10 @@ const core = @import("./core.zig");
 pub fn main() !void {
     var aio = try linux.AsyncIO.init();
     defer aio.deinit();
+    try event_loop(&aio);
+}
 
+fn event_loop(aio: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

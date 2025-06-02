@@ -5,7 +5,6 @@ const mem = std.mem;
 const aio_msg = @import("./async_io_msg.zig");
 
 // Zig tagged unions can't be bitcast.
-// They're Go programmers and they don't know any better
 // So we hack it together like C
 pub const UsrData = packed struct(u64) {
     tag: enum(u8) { client_connected, client_ready, client_msg },
@@ -69,19 +68,13 @@ pub fn RunTime(
             self.client_fds.deinit(allocator);
         }
 
-        pub fn register_client(self: *@This(), client_fd: FD) !struct {
-            accept: u64,
-            send: aio_req.Send,
-        } {
+        pub fn register_client(self: *@This(), client_fd: FD) !aio_req.Send {
             const client_slot = try self.client_fds.add(client_fd);
 
             return .{
-                .accept = UsrData.client_connected,
-                .send = .{
-                    .usr_data = UsrData.client_ready(client_slot),
-                    .client_fd = client_fd,
-                    .buf = "connection acknowledged\n",
-                },
+                .usr_data = UsrData.client_ready(client_slot),
+                .client_fd = client_fd,
+                .buf = "connection acknowledged\n",
             };
         }
 

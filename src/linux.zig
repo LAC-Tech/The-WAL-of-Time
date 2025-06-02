@@ -94,7 +94,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !linux.io_uring_cqe {
+    pub fn wait_for_res(self: *@This()) !aio_msg.res {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -102,6 +102,6 @@ pub const AsyncIO = struct {
             @panic(@tagName(err));
         }
 
-        return cqe;
+        return .{ .rc = cqe.res, .usr_data = cqe.user_data };
     }
 };

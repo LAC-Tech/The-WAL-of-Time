@@ -34,21 +34,21 @@ fn event_loop(aio: anytype) !void {
     debug.print("The WAL weaves as the WAL wills\n", .{});
 
     while (true) {
-        const cqe = try aio.wait_for_res();
-        const usr_data: core.UsrData = @bitCast(cqe.user_data);
+        const aio_res = try aio.wait_for_res();
+        const usr_data: core.UsrData = @bitCast(aio_res.usr_data);
 
         switch (usr_data.tag) {
             .client_connected => {
-                const client_fd: linux.fd_t = cqe.res;
-                const rt_res = try rt.register_client(client_fd);
+                const client_fd: linux.fd_t = aio_res.rc;
+                const send_req = try rt.register_client(client_fd);
 
                 // Replace itself on the queue, so other clients can connect
-                _ = try aio.accept(rt_res.accept);
+                _ = try aio.accept(core.UsrData.client_connected);
 
                 // Let client know they can connect.
-                _ = try aio.send(rt_res.send);
+                _ = try aio.send(send_req);
 
-                _ = try aio.flush();
+                debug.assert(2 == try aio.flush());
             },
             .client_ready => {
                 const client_slot = usr_data.payload.client_slot;
@@ -57,7 +57,7 @@ fn event_loop(aio: anytype) !void {
                 // so we can receive a message
                 _ = try aio.recv(rt_res);
 
-                _ = try aio.flush();
+                debug.assert(1 == try aio.flush());
             },
             .client_msg => {
                 const client_slot = usr_data.payload.client_slot;
@@ -69,7 +69,7 @@ fn event_loop(aio: anytype) !void {
                 // So we can receive more messages
                 _ = try aio.recv(rt_res);
 
-                _ = try aio.flush();
+                debug.assert(1 == try aio.flush());
             },
         }
     }

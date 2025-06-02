@@ -35,6 +35,9 @@ fn event_loop(aio: anytype) !void {
 
     while (true) {
         const aio_res = try aio.wait_for_res();
+
+        // TODO: give aio_res directly to core and return tagged enum annotated
+        // with data needed to do further dispatches on the aio
         const usr_data: core.UsrData = @bitCast(aio_res.usr_data);
 
         switch (usr_data.tag) {

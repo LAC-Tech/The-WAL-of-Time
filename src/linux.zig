@@ -4,15 +4,17 @@ const linux = std.os.linux;
 const net = std.net;
 const posix = std.posix;
 
-const aio_msg = @import("./async_io_msg.zig");
+const aio = @import("./async_io.zig");
 
-pub const fd_t = posix.fd_t;
+pub const fd = posix.fd_t;
 
-pub fn fd_eql(a: fd_t, b: fd_t) bool {
+pub fn fd_eql(a: fd, b: fd) bool {
     return a == b;
 }
 
-const aio_req = aio_msg.req(fd_t);
+const aio_msg = aio.msg(fd);
+const aio_req = aio_msg.req;
+const AioRes = aio_msg.Res;
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
@@ -94,7 +96,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !aio_msg.Res {
+    pub fn wait_for_res(self: *@This()) !AioRes {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();

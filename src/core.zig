@@ -2,12 +2,12 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
-const aio_msg = @import("./async_io_msg.zig");
+const aio = @import("./async_io.zig");
 const limits = @import("limits.zig");
 
 // TODO: awful hack
 // Users of runtime should not have to know about UsrData
-pub const UsrData = aio_msg.UsrData;
+pub const UsrData = aio.UsrData;
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
@@ -16,7 +16,8 @@ pub fn RunTime(
     comptime fd_eql: fn (fd, fd) bool,
 ) type {
     const ClientFDs = SlotMap(fd, limits.max_clients, fd_eql);
-    const aio_req = aio_msg.req(fd);
+    const aio_msg = aio.msg(fd);
+    const aio_req = aio_msg.req;
 
     return struct {
         client_fds: ClientFDs,

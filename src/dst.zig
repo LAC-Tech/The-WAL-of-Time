@@ -15,6 +15,11 @@ const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
 pub const AsyncIO = struct {
+    // TODO; some collection of requests
+    // Priority queue. each item has a pre-ordained time it gets popped off
+    // this is based on the current tick, so older items don't stay on the queue
+    // forever
+    // the wait for res function advances time tot he next queue item to go
     pub fn init() !@This() {
         @panic("TODO");
     }
@@ -53,6 +58,13 @@ pub const AsyncIO = struct {
         @panic("TODO");
     }
 };
+
+const Req = union(enum) {
+    accept: u64,
+    recv: aio_req.Recv,
+    send: aio_req.Send,
+};
+
 //const heap = std.heap;
 //const math = std.math;
 //const mem = std.mem;

@@ -6,38 +6,15 @@ const limits = @import("./limits.zig");
 const aio_msg = @import("./async_io_msg.zig");
 
 // TODO: better name. Not only the enum name, but the names of the enums
-const Tag = enum(u8) { client_connected, client_ready, client_msg };
+const Tag = enum(u8) { connection_accepted, ready_to_recv, msg_available };
 
 // Zig tagged unions can't be bitcast.
 // So we hack it together like C
-// TODO: remove this pub
-pub const UsrData = packed struct(u64) {
+// 64 bits so it fits into io_uring, and I think kqueue
+const UsrData = packed struct(u64) {
     tag: Tag,
-    payload: packed union { client_slot: u8 },
+    payload: packed union { client_slot: u8 } = undefined,
     _padding: u48 = 0,
-
-    pub const client_connected: u64 = @bitCast(@This(){
-        .tag = .client_connected,
-        .payload = undefined,
-    });
-
-    fn client_ready(client_slot: u8) u64 {
-        const result = @This(){
-            .tag = .client_ready,
-            .payload = .{ .client_slot = client_slot },
-        };
-
-        return @bitCast(result);
-    }
-
-    fn client_msg(client_slot: u8) u64 {
-        const result = @This(){
-            .tag = .client_msg,
-            .payload = .{ .client_slot = client_slot },
-        };
-
-        return @bitCast(result);
-    }
 };
 
 comptime {
@@ -54,12 +31,11 @@ pub fn RunTime(
     const aio_req = aio_msg.req(FD);
 
     const Res = union(Tag) {
-        client_connected: struct {
-            accept: aio_req.Accept,
-            send: aio_req.Send,
+        connection_accepted: struct {
+            reqs: struct { aio_req.Accept, aio_req.Send },
         },
-        client_ready: aio_req.Recv,
-        client_msg: aio_req.Recv,
+        ready_to_recv: struct { req: aio_req.Recv },
+        msg_available: struct { msg: []const u8, req: aio_req.Recv },
     };
 
     return struct {
@@ -80,45 +56,64 @@ pub fn RunTime(
             self.client_fds.deinit(allocator);
         }
 
+        pub fn initial_aio_reqs() [limits.max_clients]u64 {
+            const usr_data: UsrData = .{ .tag = .connection_accepted };
+            return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
+        }
+
         pub fn process_aio_res(self: *@This(), aio_res: aio_msg.Res) !Res {
             const usr_data: UsrData = @bitCast(aio_res.usr_data);
 
             switch (usr_data.tag) {
-                .client_connected => {
+                .connection_accepted => {
                     const client_fd: FD = aio_res.rc;
                     const client_slot = try self.client_fds.add(client_fd);
 
+                    const accept_usr_data = UsrData{
+                        .tag = .connection_accepted,
+                    };
+
+                    const send_usr_data = UsrData{
+                        .tag = .ready_to_recv,
+                        .payload = .{ .client_slot = client_slot },
+                    };
+
                     return .{
-                        .client_connected = .{
-                            .accept = UsrData.client_connected,
-                            .send = .{
-                                .usr_data = UsrData.client_ready(client_slot),
-                                .client_fd = client_fd,
-                                .buf = "connection acknowledged\n",
+                        .connection_accepted = .{
+                            .reqs = .{
+                                @bitCast(accept_usr_data),
+                                .{
+                                    .usr_data = @bitCast(send_usr_data),
+                                    .client_fd = client_fd,
+                                    .buf = "connection acknowledged\n",
+                                },
                             },
                         },
                     };
                 },
-                .client_ready => {
+                .ready_to_recv => {
                     const client_slot = usr_data.payload.client_slot;
 
                     return .{
-                        .client_ready = self.prepare_client(client_slot),
+                        .ready_to_recv = .{
+                            .req = self.prepare_client(client_slot),
+                        },
                     };
                 },
-                .client_msg => {
+                .msg_available => {
                     const client_slot = usr_data.payload.client_slot;
 
-                    // TODO: log this or something?
-                    debug.print("received: {s}", .{self.recv_buf});
-
                     return .{
-                        .client_ready = self.prepare_client(client_slot),
+                        .msg_available = .{
+                            .msg = self.recv_buf,
+                            .req = self.prepare_client(client_slot),
+                        },
                     };
                 },
             }
         }
 
+        // TODO: not a good name
         fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
             // so we can receive a message
             const client_fd = self.client_fds.get(client_slot) orelse {
@@ -127,8 +122,13 @@ pub fn RunTime(
 
             @memset(self.recv_buf, 0);
 
+            const usr_data: UsrData = .{
+                .tag = .msg_available,
+                .payload = .{ .client_slot = client_slot },
+            };
+
             return .{
-                .usr_data = UsrData.client_msg(client_slot),
+                .usr_data = @bitCast(usr_data),
                 .client_fd = client_fd,
                 .buf = self.recv_buf,
             };

@@ -43,11 +43,11 @@ comptime {
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
 pub fn RunTime(
-    comptime FD: type,
-    comptime fd_eql: fn (FD, FD) bool,
+    comptime fd: type,
+    comptime fd_eql: fn (fd, fd) bool,
 ) type {
-    const ClientFDs = SlotMap(FD, limits.max_clients, fd_eql);
-    const aio_req = aio_msg.req(FD);
+    const ClientFDs = SlotMap(fd, limits.max_clients, fd_eql);
+    const aio_req = aio_msg.req(fd);
 
     return struct {
         client_fds: ClientFDs,
@@ -72,7 +72,7 @@ pub fn RunTime(
             return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
         }
 
-        pub fn register_client(self: *@This(), client_fd: FD) !aio_req.Send {
+        pub fn register_client(self: *@This(), client_fd: fd) !aio_req.Send {
             const client_slot = try self.client_fds.add(client_fd);
 
             return .{

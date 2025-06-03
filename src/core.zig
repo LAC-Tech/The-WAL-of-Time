@@ -9,7 +9,7 @@ const limits = @import("limits.zig");
 // So we hack it together like C
 pub const UsrData = packed struct(u64) {
     tag: enum(u8) { client_connected, client_ready, client_msg },
-    payload: packed union { client_slot: u8 },
+    payload: packed union { client_slot: u8 } = undefined,
     _padding: u48 = 0,
 
     pub const client_connected: u64 = @bitCast(@This(){
@@ -65,6 +65,11 @@ pub fn RunTime(
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.client_fds.deinit(allocator);
+        }
+
+        pub fn initial_aio_reqs() [limits.max_clients]u64 {
+            const usr_data: UsrData = .{ .tag = .client_connected };
+            return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
         }
 
         pub fn register_client(self: *@This(), client_fd: FD) !aio_req.Send {

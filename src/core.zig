@@ -2,17 +2,12 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
-const limits = @import("./limits.zig");
 const aio_msg = @import("./async_io_msg.zig");
-
-// TODO: better name. Not only the enum name, but the names of the enums
-const Tag = enum(u8) { client_connected, client_ready, client_msg };
 
 // Zig tagged unions can't be bitcast.
 // So we hack it together like C
-// TODO: remove this pub
 pub const UsrData = packed struct(u64) {
-    tag: Tag,
+    tag: enum(u8) { client_connected, client_ready, client_msg },
     payload: packed union { client_slot: u8 },
     _padding: u48 = 0,
 
@@ -49,18 +44,11 @@ comptime {
 pub fn RunTime(
     comptime FD: type,
     comptime fd_eql: fn (FD, FD) bool,
+    comptime max_clients: usize,
+    comptime write_buf_size: usize,
 ) type {
-    const ClientFDs = SlotMap(FD, limits.max_clients, fd_eql);
+    const ClientFDs = SlotMap(FD, max_clients, fd_eql);
     const aio_req = aio_msg.req(FD);
-
-    const Res = union(Tag) {
-        client_connected: struct {
-            accept: aio_req.Accept,
-            send: aio_req.Send,
-        },
-        client_ready: aio_req.Recv,
-        client_msg: aio_req.Recv,
-    };
 
     return struct {
         client_fds: ClientFDs,
@@ -68,7 +56,7 @@ pub fn RunTime(
 
         pub fn init(allocator: mem.Allocator) !@This() {
             // TODO: one of these per client?  they can be overwritten
-            const recv_buf = try allocator.alloc(u8, limits.write_buf_size);
+            const recv_buf = try allocator.alloc(u8, write_buf_size);
 
             return .{
                 .client_fds = try ClientFDs.init(allocator),
@@ -80,46 +68,17 @@ pub fn RunTime(
             self.client_fds.deinit(allocator);
         }
 
-        pub fn process_aio_res(self: *@This(), aio_res: aio_msg.Res) !Res {
-            const usr_data: UsrData = @bitCast(aio_res.usr_data);
+        pub fn register_client(self: *@This(), client_fd: FD) !aio_req.Send {
+            const client_slot = try self.client_fds.add(client_fd);
 
-            switch (usr_data.tag) {
-                .client_connected => {
-                    const client_fd: FD = aio_res.rc;
-                    const client_slot = try self.client_fds.add(client_fd);
-
-                    return .{
-                        .client_connected = .{
-                            .accept = UsrData.client_connected,
-                            .send = .{
-                                .usr_data = UsrData.client_ready(client_slot),
-                                .client_fd = client_fd,
-                                .buf = "connection acknowledged\n",
-                            },
-                        },
-                    };
-                },
-                .client_ready => {
-                    const client_slot = usr_data.payload.client_slot;
-
-                    return .{
-                        .client_ready = self.prepare_client(client_slot),
-                    };
-                },
-                .client_msg => {
-                    const client_slot = usr_data.payload.client_slot;
-
-                    // TODO: log this or something?
-                    debug.print("received: {s}", .{self.recv_buf});
-
-                    return .{
-                        .client_ready = self.prepare_client(client_slot),
-                    };
-                },
-            }
+            return .{
+                .usr_data = UsrData.client_ready(client_slot),
+                .client_fd = client_fd,
+                .buf = "connection acknowledged\n",
+            };
         }
 
-        fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
+        pub fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
             // so we can receive a message
             const client_fd = self.client_fds.get(client_slot) orelse {
                 @panic("expect to have a client fd here");

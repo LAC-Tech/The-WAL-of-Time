@@ -3,6 +3,7 @@ const debug = std.debug;
 const mem = std.mem;
 
 const aio_msg = @import("./async_io_msg.zig");
+const limits = @import("limits.zig");
 
 // Zig tagged unions can't be bitcast.
 // So we hack it together like C
@@ -44,10 +45,8 @@ comptime {
 pub fn RunTime(
     comptime FD: type,
     comptime fd_eql: fn (FD, FD) bool,
-    comptime max_clients: usize,
-    comptime write_buf_size: usize,
 ) type {
-    const ClientFDs = SlotMap(FD, max_clients, fd_eql);
+    const ClientFDs = SlotMap(FD, limits.max_clients, fd_eql);
     const aio_req = aio_msg.req(FD);
 
     return struct {
@@ -56,7 +55,7 @@ pub fn RunTime(
 
         pub fn init(allocator: mem.Allocator) !@This() {
             // TODO: one of these per client?  they can be overwritten
-            const recv_buf = try allocator.alloc(u8, write_buf_size);
+            const recv_buf = try allocator.alloc(u8, limits.write_buf_size);
 
             return .{
                 .client_fds = try ClientFDs.init(allocator),

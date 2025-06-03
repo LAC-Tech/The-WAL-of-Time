@@ -5,40 +5,9 @@ const mem = std.mem;
 const aio_msg = @import("./async_io_msg.zig");
 const limits = @import("limits.zig");
 
-// Zig tagged unions can't be bitcast.
-// So we hack it together like C
-pub const UsrData = packed struct(u64) {
-    tag: enum(u8) { client_connected, client_ready, client_msg },
-    payload: packed union { client_slot: u8 } = undefined,
-    _padding: u48 = 0,
-
-    pub const client_connected: u64 = @bitCast(@This(){
-        .tag = .client_connected,
-        .payload = undefined,
-    });
-
-    fn client_ready(client_slot: u8) u64 {
-        const result = @This(){
-            .tag = .client_ready,
-            .payload = .{ .client_slot = client_slot },
-        };
-
-        return @bitCast(result);
-    }
-
-    fn client_msg(client_slot: u8) u64 {
-        const result = @This(){
-            .tag = .client_msg,
-            .payload = .{ .client_slot = client_slot },
-        };
-
-        return @bitCast(result);
-    }
-};
-
-comptime {
-    debug.assert(8 == @sizeOf(UsrData));
-}
+// TODO: awful hack
+// Users of runtime should not have to know about UsrData
+pub const UsrData = aio_msg.UsrData;
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running

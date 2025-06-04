@@ -16,13 +16,13 @@ pub fn main() !void {
         if (mem.eql(u8, arg, "test")) {
             var aio = try dst.AsyncIO.init();
             defer aio.deinit();
-            try event_loop.run(dst.fd, dst.fd_eql, &aio);
+            try event_loop.run(dst.FD, dst.fd_eql, &aio);
         } else {
             @panic("unknown arg");
         }
     } else {
         var aio = try linux.AsyncIO.init();
         defer aio.deinit();
-        try event_loop.run(linux.fd, linux.fd_eql, &aio);
+        try event_loop.run(linux.FD, linux.fd_eql, &aio);
     }
 }

@@ -4,13 +4,13 @@ const std = @import("std");
 
 const aio = @import("./async_io.zig");
 
-pub const fd = usize;
+pub const FD = usize;
 
-pub fn fd_eql(a: fd, b: fd) bool {
+pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
 
-const aio_msg = aio.msg(fd);
+const aio_msg = aio.msg(FD);
 const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 

@@ -6,13 +6,13 @@ const posix = std.posix;
 
 const aio = @import("./async_io.zig");
 
-pub const fd = posix.fd_t;
+pub const FD = posix.fd_t;
 
-pub fn fd_eql(a: fd, b: fd) bool {
+pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
 
-const aio_msg = aio.msg(fd);
+const aio_msg = aio.msg(FD);
 const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
@@ -29,33 +29,29 @@ pub const AsyncIO = struct {
         const entries = 128;
         const ring = try linux.IoUring.init(entries, 0);
 
-        const socket_fd = try posix.socket(
+        const fd = try posix.socket(
             posix.AF.INET,
             posix.SOCK.STREAM,
             posix.IPPROTO.TCP,
         );
 
-        try posix.setsockopt(
-            socket_fd,
-            posix.SOL.SOCKET,
-            posix.SO.REUSEADDR,
-            // Man page: "For Boolean options, 0 indicates that the option is
-            // disabled and 1 indicates that the option is enabled."
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
+        // Man page: "For Boolean options, 0 indicates that the option is
+        // disabled and 1 indicates that the option is enabled."
+        const opt = &std.mem.toBytes(@as(c_int, 1));
+        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, opt);
 
         const port = 12345;
         var addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, port);
         const addr_len = addr.getOsSockLen();
 
-        try posix.bind(socket_fd, &addr.any, addr_len);
+        try posix.bind(fd, &addr.any, addr_len);
 
         const backlog = 128;
-        try posix.listen(socket_fd, backlog);
+        try posix.listen(fd, backlog);
 
         return .{
             .ring = ring,
-            .socket_fd = socket_fd,
+            .socket_fd = fd,
         };
     }
 

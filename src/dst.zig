@@ -15,6 +15,8 @@ const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
 pub const AsyncIO = struct {
+    input_reqs: std.ArrayList(Req),
+
     // TODO; some collection of requests
     // Priority queue. each item has a pre-ordained time it gets popped off
     // this is based on the current tick, so older items don't stay on the queue

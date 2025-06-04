@@ -21,8 +21,6 @@ const AioRes = aio_msg.Res;
 pub const AsyncIO = struct {
     ring: linux.IoUring,
     socket_fd: posix.socket_t,
-    addr: net.Address,
-    addr_len: posix.socklen_t,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
@@ -58,8 +56,6 @@ pub const AsyncIO = struct {
         return .{
             .ring = ring,
             .socket_fd = socket_fd,
-            .addr = addr,
-            .addr_len = addr_len,
         };
     }
 
@@ -69,13 +65,7 @@ pub const AsyncIO = struct {
     }
 
     pub fn accept(self: *@This(), usr_data: u64) !*linux.io_uring_sqe {
-        return self.ring.accept(
-            @bitCast(usr_data),
-            self.socket_fd,
-            &self.addr.any,
-            &self.addr_len,
-            0,
-        );
+        return self.ring.accept(usr_data, self.socket_fd, null, null, 0);
     }
 
     pub fn recv(self: *@This(), req: aio_req.Recv) !*linux.io_uring_sqe {

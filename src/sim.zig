@@ -1,6 +1,10 @@
 //! Deterministic Simulation Tester
 
 const std = @import("std");
+const math = std.math;
+const mem = std.mem;
+const ArrayList = std.ArrayListUnmanaged;
+const Random = std.Random;
 
 const aio = @import("./async_io.zig");
 
@@ -14,50 +18,131 @@ const aio_msg = aio.msg(FD);
 const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
-pub const AsyncIO = struct {
-    input_reqs: std.ArrayList(Req),
+// Global simulation clock
+var current_time: u64 = 0;
 
-    // TODO; some collection of requests
-    // Priority queue. each item has a pre-ordained time it gets popped off
-    // this is based on the current tick, so older items don't stay on the queue
-    // forever
-    // the wait for res function advances time tot he next queue item to go
-    pub fn init() !@This() {
-        @panic("TODO");
+pub const AsyncIO = struct {
+    input_reqs: ArrayList(Req),
+    processing_queue: std.PriorityQueue(ProcessingReq, void, compareExecTime),
+    completion_queue: std.PriorityQueue(CompletedReq, void, compareCompleteTime),
+    rng: Random.DefaultPrng,
+
+    const ProcessingReq = struct {
+        req: Req,
+        exec_time: u64, // When the op "executes" in the kernel
+    };
+
+    const CompletedReq = struct {
+        req: Req,
+        complete_time: u64, // When the CQE is posted
+        result: FD, // Simulated result (e.g., bytes transferred, error code)
+    };
+
+    fn compareExecTime(_: void, a: ProcessingReq, b: ProcessingReq) math.Order {
+        return math.order(a.exec_time, b.exec_time);
     }
 
-    pub fn deinit(self: *@This()) void {
-        _ = self;
-        @panic("TODO");
+    fn compareCompleteTime(_: void, a: CompletedReq, b: CompletedReq) math.Order {
+        return math.order(a.complete_time, b.complete_time);
+    }
+
+    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
+        return .{
+            .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
+            .processing_queue = std.PriorityQueue(
+                ProcessingReq,
+                void,
+                compareExecTime,
+            ).init(allocator, {}),
+            .completion_queue = std.PriorityQueue(
+                CompletedReq,
+                void,
+                compareCompleteTime,
+            ).init(allocator, {}),
+            .rng = Random.DefaultPrng.init(seed),
+        };
+    }
+
+    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+        self.input_reqs.deinit(allocator);
+        self.processing_queue.deinit();
+        self.completion_queue.deinit();
     }
 
     pub fn accept(self: *@This(), usr_data: u64) !void {
-        _ = self;
-        _ = usr_data;
-        @panic("TODO");
+        self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
     }
 
     pub fn recv(self: *@This(), req: aio_req.Recv) !void {
-        _ = self;
-        _ = req;
-        @panic("TODO");
+        self.input_reqs.appendAssumeCapacity(.{ .recv = req });
     }
 
     pub fn send(self: *@This(), req: aio_req.Send) !void {
-        _ = self;
-        _ = req;
-        @panic("TODO");
+        self.input_reqs.appendAssumeCapacity(.{ .send = req });
     }
 
-    /// Number of entries submitted
     pub fn flush(self: *@This()) !u32 {
-        _ = self;
-        @panic("TODO");
+        const count = self.input_reqs.items.len;
+        for (self.input_reqs.items) |req| {
+            // Simulate kernel processing delay (e.g., 1-10 ticks)
+            const exec_delay = self.rng.random().intRangeAtMost(u64, 1, 10);
+            const exec_time = current_time + exec_delay;
+
+            // Simulate completion delay after execution (e.g., 1-5 ticks)
+            const complete_delay = self.rng.random().intRangeAtMost(u64, 1, 5);
+            const complete_time = exec_time + complete_delay;
+
+            // Simulate result (e.g., bytes for recv/send, new fd for accept, or error)
+            const result: FD = switch (req) {
+                .accept => 42, // Fake client FD
+                .recv => |r| @min(r.buf.len, 1024), // Fake bytes read
+                .send => |s| s.buf.len, // Fake bytes sent
+            };
+
+            // Move to processing queue
+            try self.processing_queue.add(.{ .req = req, .exec_time = exec_time });
+
+            // Move to completion queue
+            try self.completion_queue.add(
+                .{
+                    .req = req,
+                    .complete_time = complete_time,
+                    .result = result,
+                },
+            );
+        }
+        self.input_reqs.clearRetainingCapacity();
+        return @intCast(count);
     }
 
     pub fn wait_for_res(self: *@This()) !AioRes {
-        _ = self;
-        @panic("TODO");
+        if (self.completion_queue.peek()) |completed| {
+            // Advance global time to the next completion
+            current_time = completed.complete_time;
+
+            // Remove from completion queue
+            _ = self.completion_queue.remove();
+
+            // Remove any processed ops from processing queue
+            while (self.processing_queue.peek()) |proc| {
+                if (proc.exec_time <= current_time) {
+                    _ = self.processing_queue.remove();
+                } else {
+                    break;
+                }
+            }
+
+            // Return result
+            return .{
+                .rc = completed.result,
+                .usr_data = switch (completed.req) {
+                    .accept => |u| u,
+                    .recv => |r| r.usr_data,
+                    .send => |s| s.usr_data,
+                },
+            };
+        }
+        return error.NoCompletions;
     }
 };
 

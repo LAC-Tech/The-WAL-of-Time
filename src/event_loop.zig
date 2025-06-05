@@ -8,14 +8,11 @@ const core = @import("./core.zig");
 const limits = @import("limits.zig");
 
 pub fn run(
+    allocator: mem.Allocator,
     comptime fd: type,
     comptime fd_eql: fn (fd, fd) bool,
     aio: anytype,
 ) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
     const RunTime = core.RunTime(fd, fd_eql);
     var rt = try RunTime.init(allocator);
     defer rt.deinit(allocator);

@@ -18,7 +18,27 @@ const aio_msg = aio.msg(FD);
 const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
-// Global simulation clock
+fn RandRange(comptime T: type) type {
+    return struct {
+        at_least: T,
+        at_most: T,
+
+        fn init(at_least: T, at_most: T) @This() {
+            return .{ .at_least = at_least, .at_most = at_most };
+        }
+
+        fn gen(self: @This(), rng: anytype) T {
+            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
+        }
+    };
+}
+
+const config = struct {
+    const kernel_process_time = RandRange(u64).init(1, 10);
+    const completion_transfer_time = RandRange(u64).init(1, 5);
+    const flush_time = RandRange(u64).init(1, 5);
+};
+
 pub const Time = struct {
     _current: u64,
 
@@ -69,6 +89,10 @@ const DebugLog = struct {
     }
 };
 
+// TODO: single "inflight req" queue, with processing and completed items.
+// advanced time until you find a completed item and pop that, to sim blocking
+// can also receive messages
+
 pub const AsyncIO = struct {
     input_reqs: ArrayList(Req),
     pq: Processing.Queue,
@@ -106,35 +130,28 @@ pub const AsyncIO = struct {
 
     pub fn flush(self: *@This()) !u32 {
         const result = self.input_reqs.items.len;
+
         for (self.input_reqs.items) |req| {
-            // Simulating the delays at the two steps
-            const kernel_processing_delay = self.rand(u64, 1, 10);
-            const exec_time = self.time.now() + kernel_processing_delay;
+            // put things on the processing queue
 
-            const complete_delay = self.rand(u64, 1, 5);
-            const complete_time = exec_time + complete_delay;
-
-            try self.pq.add(.{ .req = req, .exec_time = exec_time });
-
-            const rc: FD = switch (req) {
-                .accept => self.rand(u8, 0, 8),
-                .recv => |r| @min(r.buf.len, 1024),
-                .send => |s| s.buf.len,
+            const pqe: Processing.Item = .{
+                .req = req,
+                .exec_time = self.time.now() + config.kernel_process_time.gen(
+                    self.rng,
+                ),
             };
 
-            try self.cq.add(
-                .{
-                    .req = req,
-                    .complete_time = complete_time,
-                    .result = rc,
-                },
-            );
+            try self.pq.add(pqe);
         }
+
         self.input_reqs.clearRetainingCapacity();
         return @intCast(result);
     }
 
     pub fn wait_for_res(self: *@This()) !AioRes {
+        // TODO:
+        // - skip forward
+
         if (self.cq.removeOrNull()) |completed| {
             self.time.advance(completed.complete_time - self.time.now());
 
@@ -180,7 +197,8 @@ const Processing = struct {
 
     const Item = struct {
         req: Req,
-        exec_time: u64, // When the op "executes" in the kernel
+        /// At this point it will be executed and passed to the Completion queue
+        exec_time: u64,
     };
 
     fn compare(_: void, a: Item, b: Item) math.Order {
@@ -193,8 +211,9 @@ const Completion = struct {
 
     const Item = struct {
         req: Req,
-        complete_time: u64, // When the CQE is posted
-        result: FD, // Simulated result (e.g., bytes transferred, error code)
+        /// Time when it can be popped off the completion queue
+        ready_time: u64,
+        result: FD,
     };
 
     fn compare(_: void, a: Item, b: Item) math.Order {

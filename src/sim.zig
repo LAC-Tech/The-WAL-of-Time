@@ -137,7 +137,7 @@ pub const AsyncIO = struct {
             const pqe: Processing.Item = .{
                 .req = req,
                 .exec_time = self.time.now() + config.kernel_process_time.gen(
-                    self.rng,
+                    &self.rng,
                 ),
             };
 
@@ -153,7 +153,7 @@ pub const AsyncIO = struct {
         // - skip forward
 
         if (self.cq.removeOrNull()) |completed| {
-            self.time.advance(completed.complete_time - self.time.now());
+            self.time.advance(completed.ready_time - self.time.now());
 
             // Remove any processed ops from processing queue
             while (self.pq.peek()) |proc| {
@@ -217,7 +217,7 @@ const Completion = struct {
     };
 
     fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.complete_time, b.complete_time);
+        return math.order(a.ready_time, b.ready_time);
     }
 };
 

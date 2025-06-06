@@ -11,7 +11,7 @@ pub const UsrData = aio.UsrData;
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
-pub fn RunTime(
+pub fn InMem(
     comptime fd: type,
     comptime fd_eql: fn (fd, fd) bool,
 ) type {

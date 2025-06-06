@@ -13,12 +13,12 @@ pub fn run(
     comptime fd_eql: fn (fd, fd) bool,
     aio: anytype,
 ) !void {
-    const RunTime = core.RunTime(fd, fd_eql);
-    var rt = try RunTime.init(allocator);
-    defer rt.deinit(allocator);
+    const InMem = core.InMem(fd, fd_eql);
+    var in_mem = try InMem.init(allocator);
+    defer in_mem.deinit(allocator);
 
     // TODO: multishot accept?
-    for (RunTime.initial_aio_reqs()) |aio_req| {
+    for (InMem.initial_aio_reqs()) |aio_req| {
         _ = try aio.accept(aio_req);
     }
 
@@ -36,7 +36,7 @@ pub fn run(
         switch (usr_data.tag) {
             .client_connected => {
                 const client_fd: fd = aio_res.rc;
-                const send_req = try rt.register_client(client_fd);
+                const send_req = try in_mem.register_client(client_fd);
 
                 // Replace itself on the queue, so other clients can connect
                 _ = try aio.accept(core.UsrData.client_connected);
@@ -47,8 +47,8 @@ pub fn run(
                 debug.assert(2 == try aio.flush());
             },
             .client_ready => {
-                const client_slot = usr_data.payload.client_slot;
-                const rt_res = rt.prepare_client(client_slot);
+                const client_id = usr_data.payload.client_id;
+                const rt_res = in_mem.prepare_client(client_id);
 
                 // so we can receive a message
                 _ = try aio.recv(rt_res);
@@ -56,11 +56,11 @@ pub fn run(
                 debug.assert(1 == try aio.flush());
             },
             .client_msg => {
-                const client_slot = usr_data.payload.client_slot;
+                const client_id = usr_data.payload.client_id;
 
-                debug.print("received: {s}", .{rt.recv_buf});
+                debug.print("received: {s}", .{in_mem.recv_buf});
 
-                const rt_res = rt.prepare_client(client_slot);
+                const rt_res = in_mem.prepare_client(client_id);
 
                 // So we can receive more messages
                 _ = try aio.recv(rt_res);

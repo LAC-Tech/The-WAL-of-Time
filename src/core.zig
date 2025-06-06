@@ -4,6 +4,7 @@ const mem = std.mem;
 
 const aio = @import("./async_io.zig");
 const limits = @import("limits.zig");
+const ds = @import("./ds.zig");
 
 // TODO: awful hack
 // Users of runtime should not have to know about UsrData
@@ -15,7 +16,7 @@ pub fn InMem(
     comptime fd: type,
     comptime fd_eql: fn (fd, fd) bool,
 ) type {
-    const ClientFDs = SlotMap(fd, limits.max_clients, fd_eql);
+    const ClientFDs = ds.SlotMap(limits.max_clients, fd, fd_eql);
     const aio_msg = aio.msg(fd);
     const aio_req = aio_msg.req;
 
@@ -65,69 +66,6 @@ pub fn InMem(
                 .client_fd = client_fd,
                 .buf = self.recv_buf,
             };
-        }
-    };
-}
-
-pub const CreateSlotErr = error{
-    ValAlreadyExists,
-    MaxVals,
-};
-
-fn SlotMap(
-    comptime T: type,
-    comptime max_slots: usize,
-    comptime eql: fn (T, T) bool,
-) type {
-    return struct {
-        vals: []T,
-        used_slots: [max_slots]u1,
-
-        fn init(allocator: std.mem.Allocator) !@This() {
-            return .{
-                .vals = try allocator.alloc(T, max_slots),
-                .used_slots = [_]u1{0} ** max_slots,
-            };
-        }
-
-        fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            allocator.free(self.vals);
-        }
-
-        fn add(
-            self: *@This(),
-            val: T,
-        ) CreateSlotErr!u8 {
-            for (self.vals) |existing| {
-                if (eql(existing, val))
-                    return error.ValAlreadyExists;
-            }
-
-            // Find first free slot
-            for (self.used_slots, 0..max_slots) |slot, idx| {
-                if (slot == 0) { // Free slot found
-                    self.used_slots[idx] = 1;
-                    self.vals[idx] = val;
-                    return @intCast(idx);
-                }
-            }
-
-            return error.MaxVals; // No free slots
-        }
-
-        fn get(self: @This(), slot: u8) ?T {
-            if (self.used_slots[slot] == 1) {
-                return self.vals[slot];
-            } else {
-                return null;
-            }
-        }
-
-        fn remove(self: *@This(), slot: u8) T {
-            self.used_slots[slot] = 0;
-            const removed = self.names[slot];
-            self.names[slot] = "";
-            return removed;
         }
     };
 }

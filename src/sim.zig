@@ -19,54 +19,77 @@ const aio_req = aio_msg.req;
 const AioRes = aio_msg.Res;
 
 // Global simulation clock
-var current_time: u64 = 0;
+pub const Time = struct {
+    _current: u64,
+
+    pub fn init() Time {
+        return .{ ._current = 0 };
+    }
+
+    fn advance(self: *Time, delta: u64) void {
+        self._current += delta;
+    }
+
+    fn now(self: Time) u64 {
+        return self._current;
+    }
+};
+
+const DebugLog = struct {
+    file: std.fs.File,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, seed: u64) !@This() {
+        const log_dir = "log";
+        try std.fs.cwd().makePath(log_dir);
+        const filename = try std.fmt.allocPrint(
+            allocator,
+            "{s}/log_{d}_{d}.txt",
+            .{
+                log_dir,
+                seed,
+                std.time.milliTimestamp(),
+            },
+        );
+        defer allocator.free(filename);
+        const file = try std.fs.cwd().createFile(filename, .{});
+        return .{ .file = file, .allocator = allocator };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.file.close();
+    }
+
+    pub fn write(
+        self: *@This(),
+        comptime fmt: []const u8,
+        args: anytype,
+    ) !void {
+        try self.file.writer().print(fmt, args);
+    }
+};
 
 pub const AsyncIO = struct {
     input_reqs: ArrayList(Req),
-    processing_queue: std.PriorityQueue(ProcessingReq, void, compareExecTime),
-    completion_queue: std.PriorityQueue(CompletedReq, void, compareCompleteTime),
+    pq: Processing.Queue,
+    cq: Completion.Queue,
     rng: Random.DefaultPrng,
+    time: *Time,
 
-    const ProcessingReq = struct {
-        req: Req,
-        exec_time: u64, // When the op "executes" in the kernel
-    };
-
-    const CompletedReq = struct {
-        req: Req,
-        complete_time: u64, // When the CQE is posted
-        result: FD, // Simulated result (e.g., bytes transferred, error code)
-    };
-
-    fn compareExecTime(_: void, a: ProcessingReq, b: ProcessingReq) math.Order {
-        return math.order(a.exec_time, b.exec_time);
-    }
-
-    fn compareCompleteTime(_: void, a: CompletedReq, b: CompletedReq) math.Order {
-        return math.order(a.complete_time, b.complete_time);
-    }
-
-    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
+    pub fn init(allocator: mem.Allocator, seed: u64, time: *Time) !@This() {
         return .{
             .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
-            .processing_queue = std.PriorityQueue(
-                ProcessingReq,
-                void,
-                compareExecTime,
-            ).init(allocator, {}),
-            .completion_queue = std.PriorityQueue(
-                CompletedReq,
-                void,
-                compareCompleteTime,
-            ).init(allocator, {}),
+            .pq = Processing.Queue.init(allocator, {}),
+            .cq = Completion.Queue.init(allocator, {}),
             .rng = Random.DefaultPrng.init(seed),
+            .time = time,
         };
     }
 
     pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
         self.input_reqs.deinit(allocator);
-        self.processing_queue.deinit();
-        self.completion_queue.deinit();
+        self.pq.deinit();
+        self.cq.deinit();
     }
 
     pub fn accept(self: *@This(), usr_data: u64) !void {
@@ -82,57 +105,48 @@ pub const AsyncIO = struct {
     }
 
     pub fn flush(self: *@This()) !u32 {
-        const count = self.input_reqs.items.len;
+        const result = self.input_reqs.items.len;
         for (self.input_reqs.items) |req| {
-            // Simulate kernel processing delay (e.g., 1-10 ticks)
-            const exec_delay = self.rng.random().intRangeAtMost(u64, 1, 10);
-            const exec_time = current_time + exec_delay;
+            // Simulating the delays at the two steps
+            const kernel_processing_delay = self.rand(u64, 1, 10);
+            const exec_time = self.time.now() + kernel_processing_delay;
 
-            // Simulate completion delay after execution (e.g., 1-5 ticks)
-            const complete_delay = self.rng.random().intRangeAtMost(u64, 1, 5);
+            const complete_delay = self.rand(u64, 1, 5);
             const complete_time = exec_time + complete_delay;
 
-            // Simulate result (e.g., bytes for recv/send, new fd for accept, or error)
-            const result: FD = switch (req) {
-                .accept => 42, // Fake client FD
-                .recv => |r| @min(r.buf.len, 1024), // Fake bytes read
-                .send => |s| s.buf.len, // Fake bytes sent
+            try self.pq.add(.{ .req = req, .exec_time = exec_time });
+
+            const rc: FD = switch (req) {
+                .accept => self.rand(u8, 0, 8),
+                .recv => |r| @min(r.buf.len, 1024),
+                .send => |s| s.buf.len,
             };
 
-            // Move to processing queue
-            try self.processing_queue.add(.{ .req = req, .exec_time = exec_time });
-
-            // Move to completion queue
-            try self.completion_queue.add(
+            try self.cq.add(
                 .{
                     .req = req,
                     .complete_time = complete_time,
-                    .result = result,
+                    .result = rc,
                 },
             );
         }
         self.input_reqs.clearRetainingCapacity();
-        return @intCast(count);
+        return @intCast(result);
     }
 
     pub fn wait_for_res(self: *@This()) !AioRes {
-        if (self.completion_queue.peek()) |completed| {
-            // Advance global time to the next completion
-            current_time = completed.complete_time;
-
-            // Remove from completion queue
-            _ = self.completion_queue.remove();
+        if (self.cq.removeOrNull()) |completed| {
+            self.time.advance(completed.complete_time - self.time.now());
 
             // Remove any processed ops from processing queue
-            while (self.processing_queue.peek()) |proc| {
-                if (proc.exec_time <= current_time) {
-                    _ = self.processing_queue.remove();
+            while (self.pq.peek()) |proc| {
+                if (proc.exec_time <= self.time.now()) {
+                    _ = self.pq.remove();
                 } else {
                     break;
                 }
             }
 
-            // Return result
             return .{
                 .rc = completed.result,
                 .usr_data = switch (completed.req) {
@@ -144,12 +158,48 @@ pub const AsyncIO = struct {
         }
         return error.NoCompletions;
     }
+
+    fn rand(
+        self: *@This(),
+        comptime T: type,
+        at_least: T,
+        at_most: T,
+    ) u64 {
+        return self.rng.random().intRangeAtMost(T, at_least, at_most);
+    }
 };
 
 const Req = union(enum) {
     accept: u64,
     recv: aio_req.Recv,
     send: aio_req.Send,
+};
+
+const Processing = struct {
+    const Queue = std.PriorityQueue(Item, void, compare);
+
+    const Item = struct {
+        req: Req,
+        exec_time: u64, // When the op "executes" in the kernel
+    };
+
+    fn compare(_: void, a: Item, b: Item) math.Order {
+        return math.order(a.exec_time, b.exec_time);
+    }
+};
+
+const Completion = struct {
+    const Queue = std.PriorityQueue(Item, void, compare);
+
+    const Item = struct {
+        req: Req,
+        complete_time: u64, // When the CQE is posted
+        result: FD, // Simulated result (e.g., bytes transferred, error code)
+    };
+
+    fn compare(_: void, a: Item, b: Item) math.Order {
+        return math.order(a.complete_time, b.complete_time);
+    }
 };
 
 //const heap = std.heap;

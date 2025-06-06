@@ -12,13 +12,16 @@ pub fn main() !void {
     _ = args.skip();
 
     const seed: u64 = if (args.next()) |arg|
-        std.fmt.parseInt(u64, arg, 10) catch {
+        std.fmt.parseInt(u64, arg, 16) catch {
             @panic("arg must be an unsigned integer");
         }
     else
-        @intCast(std.time.nanoTimestamp());
+        std.crypto.random.int(u64);
 
-    var aio = try sim.AsyncIO.init(allocator, seed);
+    std.debug.print("Seed = {x}\n", .{seed});
+
+    var time = sim.Time.init();
+    var aio = try sim.AsyncIO.init(allocator, seed, &time);
     defer aio.deinit(allocator);
     try event_loop.run(allocator, sim.FD, sim.fd_eql, &aio);
 }

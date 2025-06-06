@@ -13,7 +13,7 @@ const executables = .{
     //},
     .{
         .name = "dst",
-        .description = "Run the server",
+        .description = "Run the deterministic simulation test",
         .path = "src/dst.zig",
     },
 };

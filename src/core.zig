@@ -6,9 +6,7 @@ const aio = @import("./async_io.zig");
 const limits = @import("limits.zig");
 const util = @import("./util.zig");
 
-// TODO: awful hack
-// Users of runtime should not have to know about UsrData
-pub const UsrData = aio.UsrData;
+const UsrData = aio.UsrData;
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
@@ -20,17 +18,16 @@ pub fn InMem(
     const aio_msg = aio.msg(fd);
     const aio_req = aio_msg.req;
 
-    //const Res = union(enum) {
-    //    client_connected: struct {
-    //        reqs: struct { accept: aio_req.Accept, send: aio_req.Send }
-    //    },
-    //    client_ready: struct {
-    //        reqs: struct { recv: aio_req.Recv }
-    //    },
-    //    client_msg: struct {
-    //        reqs: struct { recv: aio_req.Recv }
-    //    }
-    //};
+    const Res = union(enum) {
+        client_connected: struct {
+            reqs: struct { accept: aio_req.Accept, send: aio_req.Send },
+        },
+        client_ready: struct { reqs: struct { recv: aio_req.Recv } },
+        client_msg: struct {
+            msg: []const u8,
+            reqs: struct { recv: aio_req.Recv },
+        },
+    };
 
     return struct {
         client_fds: ClientFDs,
@@ -55,17 +52,7 @@ pub fn InMem(
             return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
         }
 
-        pub fn register_client(self: *@This(), client_fd: fd) !aio_req.Send {
-            const client_slot = try self.client_fds.add(client_fd);
-
-            return .{
-                .usr_data = UsrData.client_ready(client_slot),
-                .client_fd = client_fd,
-                .buf = "connection acknowledged\n",
-            };
-        }
-
-        pub fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
+        fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
             // so we can receive a message
             const client_fd = self.client_fds.get(client_slot) orelse {
                 @panic("expect to have a client fd here");
@@ -78,8 +65,58 @@ pub fn InMem(
             };
         }
 
-        //pub fn f(self: *@This(), res: aio_msg.Res) void {
+        pub fn res_with_ctx(self: *@This(), res: aio_msg.Res) !Res {
+            const usr_data: UsrData = @bitCast(res.usr_data);
 
-        //}
+            switch (usr_data.tag) {
+                .client_connected => {
+                    const client_fd: fd = res.rc;
+                    const client_slot = try self.client_fds.add(client_fd);
+
+                    const send_req = aio_req.Send{
+                        .usr_data = UsrData.client_ready(
+                            client_slot,
+                        ),
+                        .client_fd = client_fd,
+                        .buf = "connection acknowledged\n",
+                    };
+
+                    return .{
+                        .client_connected = .{
+                            .reqs = .{
+                                .accept = UsrData.client_connected,
+                                .send = send_req,
+                            },
+                        },
+                    };
+                },
+                .client_ready => {
+                    const client_id = usr_data.payload.client_id;
+
+                    const recv_req: aio_req.Recv =
+                        self.prepare_client(client_id);
+
+                    return .{
+                        .client_ready = .{
+                            .reqs = .{ .recv = recv_req },
+                        },
+                    };
+                },
+                .client_msg => {
+                    const client_id = usr_data.payload.client_id;
+                    const buf_len: usize = @intCast(res.rc);
+
+                    const recv_req: aio_req.Recv =
+                        self.prepare_client(client_id);
+
+                    return .{
+                        .client_msg = .{
+                            .msg = self.recv_buf[0..buf_len],
+                            .reqs = .{ .recv = recv_req },
+                        },
+                    };
+                },
+            }
+        }
     };
 }

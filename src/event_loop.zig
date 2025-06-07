@@ -29,41 +29,26 @@ pub fn run(
     while (true) {
         const aio_res = try aio.wait_for_res();
 
-        // TODO: give aio_res directly to core and return tagged enum annotated
-        // with data needed to do further dispatches on the aio
-        const usr_data: core.UsrData = @bitCast(aio_res.usr_data);
-
-        switch (usr_data.tag) {
-            .client_connected => {
-                const client_fd: fd = aio_res.rc;
-                const send_req = try in_mem.register_client(client_fd);
-
+        switch (try in_mem.res_with_ctx(aio_res)) {
+            .client_connected => |ctx| {
                 // Replace itself on the queue, so other clients can connect
-                _ = try aio.accept(core.UsrData.client_connected);
-
+                _ = try aio.accept(ctx.reqs.accept);
                 // Let client know they can connect.
-                _ = try aio.send(send_req);
+                _ = try aio.send(ctx.reqs.send);
 
                 debug.assert(2 == try aio.flush());
             },
-            .client_ready => {
-                const client_id = usr_data.payload.client_id;
-                const rt_res = in_mem.prepare_client(client_id);
-
+            .client_ready => |ctx| {
                 // so we can receive a message
-                _ = try aio.recv(rt_res);
+                _ = try aio.recv(ctx.reqs.recv);
 
                 debug.assert(1 == try aio.flush());
             },
-            .client_msg => {
-                const client_id = usr_data.payload.client_id;
-                const buf_len: usize = @intCast(aio_res.rc);
-                debug.print("received: {s}", .{in_mem.recv_buf[0..buf_len]});
-
-                const rt_res = in_mem.prepare_client(client_id);
+            .client_msg => |ctx| {
+                debug.print("received: {s}", .{ctx.msg});
 
                 // So we can receive more messages
-                _ = try aio.recv(rt_res);
+                _ = try aio.recv(ctx.reqs.recv);
 
                 debug.assert(1 == try aio.flush());
             },

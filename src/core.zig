@@ -11,23 +11,12 @@ const UsrData = aio.UsrData;
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
 pub fn InMem(
-    comptime fd: type,
-    comptime fd_eql: fn (fd, fd) bool,
+    comptime FD: type,
+    comptime fd_eql: fn (FD, FD) bool,
 ) type {
-    const ClientFDs = util.SlotMap(limits.max_clients, fd, fd_eql);
-    const aio_msg = aio.msg(fd);
+    const ClientFDs = util.SlotMap(limits.max_clients, FD, fd_eql);
+    const aio_msg = aio.msg(FD);
     const aio_req = aio_msg.req;
-
-    const Res = union(enum) {
-        client_connected: struct {
-            reqs: struct { accept: aio_req.Accept, send: aio_req.Send },
-        },
-        client_ready: struct { reqs: struct { recv: aio_req.Recv } },
-        client_msg: struct {
-            msg: []const u8,
-            reqs: struct { recv: aio_req.Recv },
-        },
-    };
 
     return struct {
         client_fds: ClientFDs,
@@ -65,12 +54,12 @@ pub fn InMem(
             };
         }
 
-        pub fn res_with_ctx(self: *@This(), res: aio_msg.Res) !Res {
+        pub fn res_with_ctx(self: *@This(), res: aio_msg.Res) !Res(FD) {
             const usr_data: UsrData = @bitCast(res.usr_data);
 
             switch (usr_data.tag) {
                 .client_connected => {
-                    const client_fd: fd = res.rc;
+                    const client_fd: FD = res.rc;
                     const client_slot = try self.client_fds.add(client_fd);
 
                     const send_req = aio_req.Send{
@@ -118,5 +107,20 @@ pub fn InMem(
                 },
             }
         }
+    };
+}
+
+pub fn Res(comptime FD: type) type {
+    const aio_req = aio.msg(FD).req;
+
+    return union(enum) {
+        client_connected: struct {
+            reqs: struct { accept: aio_req.Accept, send: aio_req.Send },
+        },
+        client_ready: struct { reqs: struct { recv: aio_req.Recv } },
+        client_msg: struct {
+            msg: []const u8,
+            reqs: struct { recv: aio_req.Recv },
+        },
     };
 }

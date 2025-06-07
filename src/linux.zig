@@ -60,8 +60,8 @@ pub const AsyncIO = struct {
         posix.close(self.socket_fd);
     }
 
-    pub fn accept(self: *@This(), usr_data: u64) !*linux.io_uring_sqe {
-        return self.ring.accept(usr_data, self.socket_fd, null, null, 0);
+    pub fn accept(self: *@This(), req: aio_req.Accept) !*linux.io_uring_sqe {
+        return self.ring.accept(req, self.socket_fd, null, null, 0);
     }
 
     pub fn recv(self: *@This(), req: aio_req.Recv) !*linux.io_uring_sqe {

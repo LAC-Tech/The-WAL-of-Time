@@ -5,7 +5,7 @@ const debug = std.debug;
 const mem = std.mem;
 
 const event_loop = @import("./event_loop.zig");
-const dst = @import("./sim.zig");
+const sim = @import("./sim.zig");
 const linux = @import("./linux.zig");
 
 pub fn main() !void {

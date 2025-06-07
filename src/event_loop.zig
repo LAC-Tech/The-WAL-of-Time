@@ -57,8 +57,8 @@ pub fn run(
             },
             .client_msg => {
                 const client_id = usr_data.payload.client_id;
-
-                debug.print("received: {s}", .{in_mem.recv_buf});
+                const buf_len: usize = @intCast(aio_res.rc);
+                debug.print("received: {s}", .{in_mem.recv_buf[0..buf_len]});
 
                 const rt_res = in_mem.prepare_client(client_id);
 

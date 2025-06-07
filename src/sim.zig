@@ -7,7 +7,7 @@ const ArrayList = std.ArrayListUnmanaged;
 const Random = std.Random;
 
 const aio = @import("./async_io.zig");
-const ds = @import("./ds.zig");
+const util = @import("./util.zig");
 
 pub const FD = usize;
 
@@ -194,7 +194,7 @@ const Req = union(enum) {
 };
 
 const Processing = struct {
-    const Queue = ds.PriorityQueue(Item, void, compare);
+    const Queue = std.PriorityQueue(Item, void, compare);
 
     const Item = struct {
         req: Req,
@@ -208,7 +208,7 @@ const Processing = struct {
 };
 
 const Completion = struct {
-    const Queue = ds.PriorityQueue(Item, void, compare);
+    const Queue = std.PriorityQueue(Item, void, compare);
 
     const Item = struct {
         req: Req,

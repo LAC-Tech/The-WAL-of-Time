@@ -4,7 +4,7 @@ const mem = std.mem;
 
 const aio = @import("./async_io.zig");
 const limits = @import("limits.zig");
-const ds = @import("./ds.zig");
+const util = @import("./util.zig");
 
 // TODO: awful hack
 // Users of runtime should not have to know about UsrData
@@ -16,9 +16,21 @@ pub fn InMem(
     comptime fd: type,
     comptime fd_eql: fn (fd, fd) bool,
 ) type {
-    const ClientFDs = ds.SlotMap(limits.max_clients, fd, fd_eql);
+    const ClientFDs = util.SlotMap(limits.max_clients, fd, fd_eql);
     const aio_msg = aio.msg(fd);
     const aio_req = aio_msg.req;
+
+    //const Res = union(enum) {
+    //    client_connected: struct {
+    //        reqs: struct { accept: aio_req.Accept, send: aio_req.Send }
+    //    },
+    //    client_ready: struct {
+    //        reqs: struct { recv: aio_req.Recv }
+    //    },
+    //    client_msg: struct {
+    //        reqs: struct { recv: aio_req.Recv }
+    //    }
+    //};
 
     return struct {
         client_fds: ClientFDs,
@@ -59,13 +71,15 @@ pub fn InMem(
                 @panic("expect to have a client fd here");
             };
 
-            @memset(self.recv_buf, 0);
-
             return .{
                 .usr_data = UsrData.client_msg(client_slot),
                 .client_fd = client_fd,
                 .buf = self.recv_buf,
             };
         }
+
+        //pub fn f(self: *@This(), res: aio_msg.Res) void {
+
+        //}
     };
 }

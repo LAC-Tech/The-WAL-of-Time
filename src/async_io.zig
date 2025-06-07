@@ -7,6 +7,7 @@ pub fn msg(comptime fd: type) type {
     return struct {
         pub const Res = struct { rc: fd, usr_data: u64 };
         pub const req = struct {
+            pub const Accept = u64;
             pub const Send = struct {
                 usr_data: u64,
                 client_fd: fd,

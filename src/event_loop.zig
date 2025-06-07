@@ -7,15 +7,7 @@ const mem = std.mem;
 const core = @import("./core.zig");
 const limits = @import("limits.zig");
 
-pub fn run(
-    allocator: mem.Allocator,
-    comptime FD: type,
-    comptime fd_eql: fn (FD, FD) bool,
-    aio: anytype,
-) !void {
-    const InMem = core.InMem(FD, fd_eql);
-    var in_mem = try InMem.init(allocator);
-    defer in_mem.deinit(allocator);
+pub fn initial_reqs(comptime InMem: type, aio: anytype) !void {
 
     // TODO: multishot accept?
     for (InMem.initial_aio_reqs()) |aio_req| {
@@ -23,18 +15,9 @@ pub fn run(
     }
 
     debug.assert(try aio.flush() == limits.max_clients);
-
-    debug.print("The WAL weaves as the WAL wills\n", .{});
-
-    while (true) {
-        const aio_res = try aio.wait_for_res();
-        const res = try in_mem.res_with_ctx(aio_res);
-
-        try step(FD, res, aio);
-    }
 }
 
-fn step(
+pub fn step(
     comptime FD: type,
     res: core.Res(FD),
     aio: anytype,

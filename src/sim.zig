@@ -149,34 +149,6 @@ pub const AsyncIO = struct {
         return @intCast(result);
     }
 
-    pub fn wait_for_res(self: *@This()) !AioRes {
-        // TODO:
-        // - skip forward
-
-        if (self.cq.removeOrNull()) |completed| {
-            self.time.advance(completed.ready_time - self.time.now());
-
-            // Remove any processed ops from processing queue
-            while (self.pq.peek()) |proc| {
-                if (proc.exec_time <= self.time.now()) {
-                    _ = self.pq.remove();
-                } else {
-                    break;
-                }
-            }
-
-            return .{
-                .rc = completed.result,
-                .usr_data = switch (completed.req) {
-                    .accept => |u| u,
-                    .recv => |r| r.usr_data,
-                    .send => |s| s.usr_data,
-                },
-            };
-        }
-        return error.NoCompletions;
-    }
-
     fn rand(
         self: *@This(),
         comptime T: type,

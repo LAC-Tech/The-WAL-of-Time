@@ -8,6 +8,28 @@ const Random = std.Random;
 
 const aio = @import("./async_io.zig");
 const util = @import("./util.zig");
+const core = @import("./core.zig");
+const event_loop = @import("./event_loop.zig");
+
+const Simulator = struct {
+    ticks: u64,
+    aio: AsyncIO,
+    in_mem:  core.InMem(FD, fd_eql),
+
+
+    fn init(allocator: mem.Allocator, seed: u64) !@This() {
+        return .{ .ticks = 0, .aio = try AsyncIO.init(allocator, seed) };
+    }
+
+    fn deinit(self: *@This(), allocator: mem.Allocator) void {
+        self.aio.deinit(allocator);
+    }
+
+    fn tick(self: *@This()) void {
+        _ = self;
+        event_loop.step(FD, )
+    }
+};
 
 pub const FD = usize;
 
@@ -38,22 +60,6 @@ const config = struct {
     const kernel_process_time = RandRange(u64).init(1, 10);
     const completion_transfer_time = RandRange(u64).init(1, 5);
     const flush_time = RandRange(u64).init(1, 5);
-};
-
-pub const Time = struct {
-    _current: u64,
-
-    pub fn init() Time {
-        return .{ ._current = 0 };
-    }
-
-    fn advance(self: *Time, delta: u64) void {
-        self._current += delta;
-    }
-
-    fn now(self: Time) u64 {
-        return self._current;
-    }
 };
 
 const DebugLog = struct {
@@ -99,15 +105,13 @@ pub const AsyncIO = struct {
     pq: Processing.Queue,
     cq: Completion.Queue,
     rng: Random.DefaultPrng,
-    time: *Time,
 
-    pub fn init(allocator: mem.Allocator, seed: u64, time: *Time) !@This() {
+    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
         return .{
             .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
             .pq = Processing.Queue.init(allocator, {}),
             .cq = Completion.Queue.init(allocator, {}),
             .rng = Random.DefaultPrng.init(seed),
-            .time = time,
         };
     }
 
@@ -131,22 +135,8 @@ pub const AsyncIO = struct {
 
     pub fn flush(self: *@This()) !u32 {
         const result = self.input_reqs.items.len;
-
-        for (self.input_reqs.items) |req| {
-            // put things on the processing queue
-
-            const pqe: Processing.Item = .{
-                .req = req,
-                .exec_time = self.time.now() + config.kernel_process_time.gen(
-                    &self.rng,
-                ),
-            };
-
-            try self.pq.add(pqe);
-        }
-
-        self.input_reqs.clearRetainingCapacity();
-        return @intCast(result);
+        _ = result;
+        @panic("TODO");
     }
 
     pub fn wait_for_res(self: *@This()) !AioRes {

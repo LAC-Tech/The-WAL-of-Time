@@ -14,8 +14,7 @@ const event_loop = @import("./event_loop.zig");
 const Simulator = struct {
     ticks: u64,
     aio: AsyncIO,
-    in_mem:  core.InMem(FD, fd_eql),
-
+    in_mem: core.InMem(FD, fd_eql),
 
     fn init(allocator: mem.Allocator, seed: u64) !@This() {
         return .{ .ticks = 0, .aio = try AsyncIO.init(allocator, seed) };
@@ -26,8 +25,8 @@ const Simulator = struct {
     }
 
     fn tick(self: *@This()) void {
-        _ = self;
-        event_loop.step(FD, )
+        event_loop.step(FD);
+        self.ticks += 1;
     }
 };
 

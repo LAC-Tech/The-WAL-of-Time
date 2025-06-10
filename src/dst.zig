@@ -23,6 +23,8 @@ pub fn main() !void {
     var simulator = try sim.Simulator.init(allocator, seed);
     defer simulator.deinit(allocator);
 
+    simulator.tick();
+
     @panic("TODO");
 }
 

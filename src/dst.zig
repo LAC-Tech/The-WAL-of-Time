@@ -25,3 +25,7 @@ pub fn main() !void {
 
     @panic("TODO");
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

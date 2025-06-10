@@ -6,11 +6,6 @@ const executables = .{
         .description = "Run the server",
         .path = "src/server.zig",
     },
-    //.{
-    //    .name = "client",
-    //    .description = "Run the client",
-    //    .path = "src/client.zig",
-    //},
     .{
         .name = "dst",
         .description = "Run the deterministic simulation test",
@@ -22,14 +17,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const test_step = b.step("test", "Run all tests");
+
     const tests = b.addTest(.{
         .root_source_file = b.path("src/dst.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&tests.step);
+    const run_tests = b.addRunArtifact(tests);
+    test_step.dependOn(&run_tests.step);
 
     inline for (executables) |e| {
         const exe = b.addExecutable(.{

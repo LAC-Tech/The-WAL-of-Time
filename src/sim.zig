@@ -5,6 +5,7 @@ const math = std.math;
 const mem = std.mem;
 const ArrayList = std.ArrayListUnmanaged;
 const Random = std.Random;
+const testing = std.testing;
 
 const aio = @import("./async_io.zig");
 const util = @import("./util.zig");
@@ -36,6 +37,11 @@ pub const Simulator = struct {
         self.ticks += 1;
     }
 };
+
+test "simulator init & deinit" {
+    var simulator = try Simulator.init(testing.allocator, 0);
+    defer simulator.deinit(testing.allocator);
+}
 
 pub const FD = usize;
 
@@ -189,10 +195,6 @@ const Completion = struct {
         return math.order(a.ready_time, b.ready_time);
     }
 };
-
-test "should fail" {
-    try std.testing.expect(false);
-}
 
 //const heap = std.heap;
 //const math = std.math;

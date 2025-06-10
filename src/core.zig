@@ -34,6 +34,7 @@ pub fn InMem(
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.client_fds.deinit(allocator);
+            allocator.free(self.recv_buf);
         }
 
         pub fn initial_aio_reqs() [limits.max_clients]u64 {

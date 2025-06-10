@@ -8,7 +8,7 @@ const executables = .{
     },
     //.{
     //    .name = "client",
-    //    .description = "Run the server",
+    //    .description = "Run the client",
     //    .path = "src/client.zig",
     //},
     .{
@@ -21,6 +21,15 @@ const executables = .{
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    const tests = b.addTest(.{
+        .root_source_file = b.path("src/dst.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&tests.step);
 
     inline for (executables) |e| {
         const exe = b.addExecutable(.{

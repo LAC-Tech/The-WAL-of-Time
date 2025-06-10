@@ -20,10 +20,8 @@ pub fn main() !void {
 
     std.debug.print("Seed = {x}\n", .{seed});
 
-    var aio = try sim.AsyncIO.init(allocator, seed);
-    defer aio.deinit(allocator);
-
-    //var time = sim.Time.init();
+    var simulator = try sim.Simulator.init(allocator, seed);
+    defer simulator.deinit(allocator);
 
     @panic("TODO");
 }

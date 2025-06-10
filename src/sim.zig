@@ -11,20 +11,27 @@ const util = @import("./util.zig");
 const core = @import("./core.zig");
 const event_loop = @import("./event_loop.zig");
 
-const Simulator = struct {
+pub const Simulator = struct {
+    const InMem = core.InMem(FD, fd_eql);
+
     ticks: u64,
     aio: AsyncIO,
-    in_mem: core.InMem(FD, fd_eql),
+    in_mem: InMem,
 
-    fn init(allocator: mem.Allocator, seed: u64) !@This() {
-        return .{ .ticks = 0, .aio = try AsyncIO.init(allocator, seed) };
+    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
+        return .{
+            .ticks = 0,
+            .aio = try AsyncIO.init(allocator, seed),
+            .in_mem = try InMem.init(allocator),
+        };
     }
 
-    fn deinit(self: *@This(), allocator: mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
         self.aio.deinit(allocator);
+        self.in_mem.deinit(allocator);
     }
 
-    fn tick(self: *@This()) void {
+    pub fn tick(self: *@This()) void {
         event_loop.step(FD);
         self.ticks += 1;
     }
@@ -99,13 +106,13 @@ const DebugLog = struct {
 // advanced time until you find a completed item and pop that, to sim blocking
 // can also receive messages
 
-pub const AsyncIO = struct {
+const AsyncIO = struct {
     input_reqs: ArrayList(Req),
     pq: Processing.Queue,
     cq: Completion.Queue,
     rng: Random.DefaultPrng,
 
-    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
+    fn init(allocator: mem.Allocator, seed: u64) !@This() {
         return .{
             .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
             .pq = Processing.Queue.init(allocator, {}),
@@ -114,56 +121,28 @@ pub const AsyncIO = struct {
         };
     }
 
-    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+    fn deinit(self: *@This(), allocator: mem.Allocator) void {
         self.input_reqs.deinit(allocator);
         self.pq.deinit();
         self.cq.deinit();
     }
 
-    pub fn accept(self: *@This(), usr_data: u64) !void {
+    fn accept(self: *@This(), usr_data: u64) !void {
         self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
     }
 
-    pub fn recv(self: *@This(), req: aio_req.Recv) !void {
+    fn recv(self: *@This(), req: aio_req.Recv) !void {
         self.input_reqs.appendAssumeCapacity(.{ .recv = req });
     }
 
-    pub fn send(self: *@This(), req: aio_req.Send) !void {
+    fn send(self: *@This(), req: aio_req.Send) !void {
         self.input_reqs.appendAssumeCapacity(.{ .send = req });
     }
 
-    pub fn flush(self: *@This()) !u32 {
+    fn flush(self: *@This()) !u32 {
         const result = self.input_reqs.items.len;
         _ = result;
         @panic("TODO");
-    }
-
-    pub fn wait_for_res(self: *@This()) !AioRes {
-        // TODO:
-        // - skip forward
-
-        if (self.cq.removeOrNull()) |completed| {
-            self.time.advance(completed.ready_time - self.time.now());
-
-            // Remove any processed ops from processing queue
-            while (self.pq.peek()) |proc| {
-                if (proc.exec_time <= self.time.now()) {
-                    _ = self.pq.remove();
-                } else {
-                    break;
-                }
-            }
-
-            return .{
-                .rc = completed.result,
-                .usr_data = switch (completed.req) {
-                    .accept => |u| u,
-                    .recv => |r| r.usr_data,
-                    .send => |s| s.usr_data,
-                },
-            };
-        }
-        return error.NoCompletions;
     }
 
     fn rand(
@@ -210,6 +189,10 @@ const Completion = struct {
         return math.order(a.ready_time, b.ready_time);
     }
 };
+
+test "should fail" {
+    try std.testing.expect(false);
+}
 
 //const heap = std.heap;
 //const math = std.math;

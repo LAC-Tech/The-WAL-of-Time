@@ -39,7 +39,7 @@ pub const Simulator = struct {
 };
 
 test "simulator init & deinit" {
-    var simulator = try Simulator.init(testing.allocator, 0);
+    var simulator = try Simulator.init(testing.allocator, testing.random_seed);
     defer simulator.deinit(testing.allocator);
 }
 

@@ -33,7 +33,7 @@ pub const Simulator = struct {
     }
 
     pub fn tick(self: *@This()) void {
-        event_loop.step(FD);
+        //event_loop.step(FD);
         self.ticks += 1;
     }
 };

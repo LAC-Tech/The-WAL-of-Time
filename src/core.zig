@@ -37,9 +37,9 @@ pub fn InMem(
             allocator.free(self.recv_buf);
         }
 
-        pub fn initial_aio_reqs() [limits.max_clients]u64 {
+        pub fn initial_aio_req() u64 {
             const usr_data: UsrData = .{ .tag = .client_connected };
-            return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
+            return @bitCast(usr_data);
         }
 
         fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
@@ -73,10 +73,7 @@ pub fn InMem(
 
                     return .{
                         .client_connected = .{
-                            .reqs = .{
-                                .accept = UsrData.client_connected,
-                                .send = send_req,
-                            },
+                            .reqs = .{ .send = send_req },
                         },
                     };
                 },
@@ -116,7 +113,7 @@ pub fn Res(comptime FD: type) type {
 
     return union(enum) {
         client_connected: struct {
-            reqs: struct { accept: aio_req.Accept, send: aio_req.Send },
+            reqs: struct { send: aio_req.Send },
         },
         client_ready: struct { reqs: struct { recv: aio_req.Recv } },
         client_msg: struct {

@@ -60,10 +60,6 @@ pub const AsyncIO = struct {
         posix.close(self.socket_fd);
     }
 
-    pub fn accept(self: *@This(), req: aio_req.Accept) !*linux.io_uring_sqe {
-        return self.ring.accept(req, self.socket_fd, null, null, 0);
-    }
-
     pub fn accept_multishot(
         self: *@This(),
         req: aio_req.Accept,

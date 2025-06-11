@@ -10,11 +10,15 @@ const limits = @import("limits.zig");
 pub fn initial_reqs(comptime InMem: type, aio: anytype) !void {
 
     // TODO: multishot accept?
-    for (InMem.initial_aio_reqs()) |aio_req| {
-        _ = try aio.accept(aio_req);
-    }
+    const aio_reqs = InMem.initial_aio_reqs();
+    //for (aio_reqs) |aio_req| {
+    //    _ = try aio.accept(aio_req);
+    //}
 
-    debug.assert(try aio.flush() == limits.max_clients);
+    //debug.assert(try aio.flush() == limits.max_clients);
+
+    _ = try aio.accept_multishot(aio_reqs[0]);
+    debug.assert(try aio.flush() == 1);
 }
 
 pub fn step(

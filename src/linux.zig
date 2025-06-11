@@ -64,6 +64,13 @@ pub const AsyncIO = struct {
         return self.ring.accept(req, self.socket_fd, null, null, 0);
     }
 
+    pub fn accept_multishot(
+        self: *@This(),
+        req: aio_req.Accept,
+    ) !*linux.io_uring_sqe {
+        return self.ring.accept_multishot(req, self.socket_fd, null, null, 0);
+    }
+
     pub fn recv(self: *@This(), req: aio_req.Recv) !*linux.io_uring_sqe {
         return self.ring.recv(
             req.usr_data,

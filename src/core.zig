@@ -107,7 +107,7 @@ pub fn InMem(
 }
 
 pub fn Res(comptime FD: type) type {
-    return union(enum) {
+    return union(aio.UsrData.Tag) {
         client_connected: struct {
             reqs: struct { send: aio.req(FD).Send },
         },

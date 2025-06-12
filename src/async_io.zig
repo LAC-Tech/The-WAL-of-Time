@@ -25,7 +25,9 @@ pub fn req(comptime fd: type) type {
 // Zig tagged unions can't be bitcast.
 // So we hack it together like C
 pub const UsrData = packed struct(u64) {
-    tag: enum(u8) { client_connected, client_ready, client_msg },
+    pub const Tag = enum(u8) { client_connected, client_ready, client_msg };
+
+    tag: Tag,
     payload: packed union { client_id: u8 } = undefined,
     _padding: u48 = 0,
 
@@ -54,5 +56,8 @@ pub const UsrData = packed struct(u64) {
 };
 
 comptime {
-    debug.assert(8 == @sizeOf(UsrData));
+    // IO Uring user_data
+    debug.assert(@sizeOf(u64) == @sizeOf(UsrData));
+    // Kqueue udata
+    debug.assert(@sizeOf(usize) == @sizeOf(UsrData));
 }

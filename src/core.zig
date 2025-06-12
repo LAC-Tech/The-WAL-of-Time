@@ -15,8 +15,6 @@ pub fn InMem(
     comptime fd_eql: fn (FD, FD) bool,
 ) type {
     const ClientFDs = util.SlotMap(limits.max_clients, FD, fd_eql);
-    const aio_msg = aio.msg(FD);
-    const aio_req = aio_msg.req;
 
     return struct {
         client_fds: ClientFDs,
@@ -42,7 +40,7 @@ pub fn InMem(
             return @bitCast(usr_data);
         }
 
-        fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
+        fn prepare_client(self: *@This(), client_slot: u8) aio.req(FD).Recv {
             // so we can receive a message
             const client_fd = self.client_fds.get(client_slot) orelse {
                 @panic("expect to have a client fd here");
@@ -55,7 +53,7 @@ pub fn InMem(
             };
         }
 
-        pub fn res_with_ctx(self: *@This(), res: aio_msg.Res) !Res(FD) {
+        pub fn res_with_ctx(self: *@This(), res: aio.Res(FD)) !Res(FD) {
             const usr_data: UsrData = @bitCast(res.usr_data);
 
             switch (usr_data.tag) {
@@ -63,7 +61,7 @@ pub fn InMem(
                     const client_fd: FD = res.rc;
                     const client_slot = try self.client_fds.add(client_fd);
 
-                    const send_req = aio_req.Send{
+                    const send_req = aio.req(FD).Send{
                         .usr_data = UsrData.client_ready(
                             client_slot,
                         ),
@@ -80,7 +78,7 @@ pub fn InMem(
                 .client_ready => {
                     const client_id = usr_data.payload.client_id;
 
-                    const recv_req: aio_req.Recv =
+                    const recv_req: aio.req(FD).Recv =
                         self.prepare_client(client_id);
 
                     return .{
@@ -93,7 +91,7 @@ pub fn InMem(
                     const client_id = usr_data.payload.client_id;
                     const buf_len: usize = @intCast(res.rc);
 
-                    const recv_req: aio_req.Recv =
+                    const recv_req: aio.req(FD).Recv =
                         self.prepare_client(client_id);
 
                     return .{
@@ -109,16 +107,14 @@ pub fn InMem(
 }
 
 pub fn Res(comptime FD: type) type {
-    const aio_req = aio.msg(FD).req;
-
     return union(enum) {
         client_connected: struct {
-            reqs: struct { send: aio_req.Send },
+            reqs: struct { send: aio.req(FD).Send },
         },
-        client_ready: struct { reqs: struct { recv: aio_req.Recv } },
+        client_ready: struct { reqs: struct { recv: aio.req(FD).Recv } },
         client_msg: struct {
             msg: []const u8,
-            reqs: struct { recv: aio_req.Recv },
+            reqs: struct { recv: aio.req(FD).Recv },
         },
     };
 }

@@ -49,10 +49,6 @@ pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
 
-const aio_msg = aio.msg(FD);
-const aio_req = aio_msg.req;
-const AioRes = aio_msg.Res;
-
 fn RandRange(comptime T: type) type {
     return struct {
         at_least: T,
@@ -137,11 +133,11 @@ const AsyncIO = struct {
         self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
     }
 
-    fn recv(self: *@This(), req: aio_req.Recv) !void {
+    fn recv(self: *@This(), req: aio.req(FD).Recv) !void {
         self.input_reqs.appendAssumeCapacity(.{ .recv = req });
     }
 
-    fn send(self: *@This(), req: aio_req.Send) !void {
+    fn send(self: *@This(), req: aio.req(FD).Send) !void {
         self.input_reqs.appendAssumeCapacity(.{ .send = req });
     }
 
@@ -163,8 +159,8 @@ const AsyncIO = struct {
 
 const Req = union(enum) {
     accept: u64,
-    recv: aio_req.Recv,
-    send: aio_req.Send,
+    recv: aio.req(FD).Recv,
+    send: aio.req(FD).Send,
 };
 
 const Processing = struct {

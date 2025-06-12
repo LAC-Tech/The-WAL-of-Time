@@ -12,10 +12,6 @@ pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
 
-const aio_msg = aio.msg(FD);
-const aio_req = aio_msg.req;
-const AioRes = aio_msg.Res;
-
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
@@ -62,12 +58,12 @@ pub const AsyncIO = struct {
 
     pub fn accept_multishot(
         self: *@This(),
-        req: aio_req.Accept,
+        req: aio.req(FD).Accept,
     ) !*linux.io_uring_sqe {
         return self.ring.accept_multishot(req, self.socket_fd, null, null, 0);
     }
 
-    pub fn recv(self: *@This(), req: aio_req.Recv) !*linux.io_uring_sqe {
+    pub fn recv(self: *@This(), req: aio.req(FD).Recv) !*linux.io_uring_sqe {
         return self.ring.recv(
             req.usr_data,
             req.client_fd,
@@ -76,7 +72,7 @@ pub const AsyncIO = struct {
         );
     }
 
-    pub fn send(self: *@This(), req: aio_req.Send) !*linux.io_uring_sqe {
+    pub fn send(self: *@This(), req: aio.req(FD).Send) !*linux.io_uring_sqe {
         return self.ring.send(req.usr_data, req.client_fd, req.buf, 0);
     }
 
@@ -85,7 +81,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !AioRes {
+    pub fn wait_for_res(self: *@This()) !aio.Res(FD) {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();

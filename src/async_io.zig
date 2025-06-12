@@ -12,52 +12,11 @@ pub fn req(comptime fd: type) type {
         pub const Accept = u64;
         pub const Send = struct {
             usr_data: u64,
-            client_fd: fd,
+            fd_client: fd,
             buf: []const u8,
         };
-        pub const Recv = struct { usr_data: u64, client_fd: fd, buf: []u8 };
+        pub const Recv = struct { usr_data: u64, fd_client: fd, buf: []u8 };
     };
 }
 
-/// Pata passed to async io systems
-/// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
-
-// Zig tagged unions can't be bitcast.
-// So we hack it together like C
-pub const UsrData = packed struct(u64) {
-    pub const Tag = enum(u8) { client_connected, client_ready, client_msg };
-
-    tag: Tag,
-    payload: packed union { client_id: u8 } = undefined,
-    _padding: u48 = 0,
-
-    pub const client_connected: u64 = @bitCast(@This(){
-        .tag = .client_connected,
-        .payload = undefined,
-    });
-
-    pub fn client_ready(client_id: u8) u64 {
-        const result = @This(){
-            .tag = .client_ready,
-            .payload = .{ .client_id = client_id },
-        };
-
-        return @bitCast(result);
-    }
-
-    pub fn client_msg(client_id: u8) u64 {
-        const result = @This(){
-            .tag = .client_msg,
-            .payload = .{ .client_id = client_id },
-        };
-
-        return @bitCast(result);
-    }
-};
-
-comptime {
-    // IO Uring user_data
-    debug.assert(@sizeOf(u64) == @sizeOf(UsrData));
-    // Kqueue udata
-    debug.assert(@sizeOf(usize) == @sizeOf(UsrData));
-}
+pub const Op = enum(u8) { accept, send, recv };

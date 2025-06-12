@@ -66,14 +66,14 @@ pub const AsyncIO = struct {
     pub fn recv(self: *@This(), req: aio.req(FD).Recv) !*linux.io_uring_sqe {
         return self.ring.recv(
             req.usr_data,
-            req.client_fd,
+            req.fd_client,
             .{ .buffer = req.buf },
             0,
         );
     }
 
     pub fn send(self: *@This(), req: aio.req(FD).Send) !*linux.io_uring_sqe {
-        return self.ring.send(req.usr_data, req.client_fd, req.buf, 0);
+        return self.ring.send(req.usr_data, req.fd_client, req.buf, 0);
     }
 
     /// Number of entries submitted

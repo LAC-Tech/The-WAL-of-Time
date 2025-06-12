@@ -19,19 +19,19 @@ pub fn step(
     aio: anytype,
 ) !void {
     switch (res) {
-        .client_connected => |ctx| {
+        .accept => |ctx| {
             // Let client know they can connect.
             _ = try aio.send(ctx.reqs.send);
 
             debug.assert(1 == try aio.flush());
         },
-        .client_ready => |ctx| {
+        .send => |ctx| {
             // so we can receive a message
             _ = try aio.recv(ctx.reqs.recv);
 
             debug.assert(1 == try aio.flush());
         },
-        .client_msg => |ctx| {
+        .recv => |ctx| {
             debug.print("received: {s}", .{ctx.msg});
 
             // So we can receive more messages

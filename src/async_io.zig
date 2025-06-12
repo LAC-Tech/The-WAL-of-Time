@@ -18,5 +18,3 @@ pub fn req(comptime fd: type) type {
         pub const Recv = struct { usr_data: u64, fd_client: fd, buf: []u8 };
     };
 }
-
-pub const Op = enum(u8) { accept, send, recv };

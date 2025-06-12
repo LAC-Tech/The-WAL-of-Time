@@ -78,9 +78,8 @@ pub fn InMem(
                     };
                 },
                 .send => {
-                    const client_id = usr_data.payload.client_id;
-
-                    const recv_req = self.prepare_client(client_id);
+                    const id = usr_data.payload.client_id;
+                    const recv_req = self.prepare_client(id);
 
                     return .{
                         .send = .{
@@ -106,8 +105,10 @@ pub fn InMem(
     };
 }
 
+const Op = enum(u8) { accept, send, recv };
+
 pub fn Res(comptime FD: type) type {
-    return union(aio.Op) {
+    return union(Op) {
         accept: struct {
             reqs: struct { send: aio.req(FD).Send },
         },
@@ -125,7 +126,7 @@ pub fn Res(comptime FD: type) type {
 // Zig tagged unions can't be bitcast.
 // So we hack it together like C
 const UsrData = packed struct(u64) {
-    op: aio.Op,
+    op: Op,
     payload: packed union { client_id: u8 } = undefined,
     _padding: u48 = 0,
 };

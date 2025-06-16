@@ -1,6 +1,6 @@
 const std = @import("std");
-//const posix = @import("./posix.zig");
 const linux = std.os.linux;
+const mem = std.mem;
 const net = std.net;
 const posix = std.posix;
 
@@ -11,6 +11,31 @@ pub const FD = posix.fd_t;
 pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
+
+pub const Req = struct {
+    pub const T = linux.io_uring_sqe;
+
+    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
+        var result = mem.zeroes(T);
+        result.prep_multishot_accept(socket_fd, null, null, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
+        var result = mem.zeroes(T);
+        result.prep_recv(socket_fd, buf, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn send(usr_data: u64, socket_fd: FD, buf: []const u8) T {
+        var result = mem.zeroes(T);
+        result.prep_send(socket_fd, buf, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+};
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
@@ -56,28 +81,13 @@ pub const AsyncIO = struct {
         posix.close(self.socket_fd);
     }
 
-    pub fn accept_multishot(
-        self: *@This(),
-        req: aio.req(FD).Accept,
-    ) !*linux.io_uring_sqe {
-        return self.ring.accept_multishot(req, self.socket_fd, null, null, 0);
-    }
-
-    pub fn recv(self: *@This(), req: aio.req(FD).Recv) !*linux.io_uring_sqe {
-        return self.ring.recv(
-            req.usr_data,
-            req.fd_client,
-            .{ .buffer = req.buf },
-            0,
-        );
-    }
-
-    pub fn send(self: *@This(), req: aio.req(FD).Send) !*linux.io_uring_sqe {
-        return self.ring.send(req.usr_data, req.fd_client, req.buf, 0);
-    }
-
     /// Number of entries submitted
-    pub fn flush(self: *@This()) !u32 {
+    pub fn flush(self: *@This(), sqes: []const linux.io_uring_sqe) !u32 {
+        for (sqes) |sqe| {
+            const vacant_sqe = try self.ring.get_sqe();
+            vacant_sqe.* = sqe;
+        }
+
         return self.ring.submit();
     }
 

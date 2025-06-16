@@ -1,196 +1,196 @@
 //! Deterministic Simulation Tester
 
-const std = @import("std");
-const math = std.math;
-const mem = std.mem;
-const ArrayList = std.ArrayListUnmanaged;
-const Random = std.Random;
-const testing = std.testing;
-
-const aio = @import("./async_io.zig");
-const util = @import("./util.zig");
-const core = @import("./core.zig");
-const event_loop = @import("./event_loop.zig");
-
-pub const Simulator = struct {
-    const InMem = core.InMem(FD, fd_eql);
-
-    ticks: u64,
-    aio: AsyncIO,
-    in_mem: InMem,
-
-    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
-        return .{
-            .ticks = 0,
-            .aio = try AsyncIO.init(allocator, seed),
-            .in_mem = try InMem.init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-        self.aio.deinit(allocator);
-        self.in_mem.deinit(allocator);
-    }
-
-    pub fn tick(self: *@This()) void {
-        //event_loop.step(FD);
-        self.ticks += 1;
-    }
-};
-
-test "simulator init & deinit" {
-    var simulator = try Simulator.init(testing.allocator, testing.random_seed);
-    defer simulator.deinit(testing.allocator);
-}
-
-pub const FD = usize;
-
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
-
-fn RandRange(comptime T: type) type {
-    return struct {
-        at_least: T,
-        at_most: T,
-
-        fn init(at_least: T, at_most: T) @This() {
-            return .{ .at_least = at_least, .at_most = at_most };
-        }
-
-        fn gen(self: @This(), rng: anytype) T {
-            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
-        }
-    };
-}
-
-const config = struct {
-    const kernel_process_time = RandRange(u64).init(1, 10);
-    const completion_transfer_time = RandRange(u64).init(1, 5);
-    const flush_time = RandRange(u64).init(1, 5);
-};
-
-const DebugLog = struct {
-    file: std.fs.File,
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator, seed: u64) !@This() {
-        const log_dir = "log";
-        try std.fs.cwd().makePath(log_dir);
-        const filename = try std.fmt.allocPrint(
-            allocator,
-            "{s}/log_{d}_{d}.txt",
-            .{
-                log_dir,
-                seed,
-                std.time.milliTimestamp(),
-            },
-        );
-        defer allocator.free(filename);
-        const file = try std.fs.cwd().createFile(filename, .{});
-        return .{ .file = file, .allocator = allocator };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.file.close();
-    }
-
-    pub fn write(
-        self: *@This(),
-        comptime fmt: []const u8,
-        args: anytype,
-    ) !void {
-        try self.file.writer().print(fmt, args);
-    }
-};
+//const std = @import("std");
+//const math = std.math;
+//const mem = std.mem;
+//const ArrayList = std.ArrayListUnmanaged;
+//const Random = std.Random;
+//const testing = std.testing;
+//
+//const aio = @import("./async_io.zig");
+//const util = @import("./util.zig");
+//const core = @import("./core.zig");
+//const event_loop = @import("./event_loop.zig");
+//
+//pub const Simulator = struct {
+//    const InMem = core.InMem(FD, fd_eql);
+//
+//    ticks: u64,
+//    aio: AsyncIO,
+//    in_mem: InMem,
+//
+//    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
+//        return .{
+//            .ticks = 0,
+//            .aio = try AsyncIO.init(allocator, seed),
+//            .in_mem = try InMem.init(allocator),
+//        };
+//    }
+//
+//    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+//        self.aio.deinit(allocator);
+//        self.in_mem.deinit(allocator);
+//    }
+//
+//    pub fn tick(self: *@This()) void {
+//        //event_loop.step(FD);
+//        self.ticks += 1;
+//    }
+//};
+//
+//test "simulator init & deinit" {
+//    var simulator = try Simulator.init(testing.allocator, testing.random_seed);
+//    defer simulator.deinit(testing.allocator);
+//}
+//
+//pub const FD = usize;
+//
+//pub fn fd_eql(a: FD, b: FD) bool {
+//    return a == b;
+//}
+//
+//fn RandRange(comptime T: type) type {
+//    return struct {
+//        at_least: T,
+//        at_most: T,
+//
+//        fn init(at_least: T, at_most: T) @This() {
+//            return .{ .at_least = at_least, .at_most = at_most };
+//        }
+//
+//        fn gen(self: @This(), rng: anytype) T {
+//            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
+//        }
+//    };
+//}
+//
+//const config = struct {
+//    const kernel_process_time = RandRange(u64).init(1, 10);
+//    const completion_transfer_time = RandRange(u64).init(1, 5);
+//    const flush_time = RandRange(u64).init(1, 5);
+//};
+//
+//const DebugLog = struct {
+//    file: std.fs.File,
+//    allocator: std.mem.Allocator,
+//
+//    pub fn init(allocator: std.mem.Allocator, seed: u64) !@This() {
+//        const log_dir = "log";
+//        try std.fs.cwd().makePath(log_dir);
+//        const filename = try std.fmt.allocPrint(
+//            allocator,
+//            "{s}/log_{d}_{d}.txt",
+//            .{
+//                log_dir,
+//                seed,
+//                std.time.milliTimestamp(),
+//            },
+//        );
+//        defer allocator.free(filename);
+//        const file = try std.fs.cwd().createFile(filename, .{});
+//        return .{ .file = file, .allocator = allocator };
+//    }
+//
+//    pub fn deinit(self: *@This()) void {
+//        self.file.close();
+//    }
+//
+//    pub fn write(
+//        self: *@This(),
+//        comptime fmt: []const u8,
+//        args: anytype,
+//    ) !void {
+//        try self.file.writer().print(fmt, args);
+//    }
+//};
 
 // TODO: single "inflight req" queue, with processing and completed items.
 // advanced time until you find a completed item and pop that, to sim blocking
 // can also receive messages
 
-const AsyncIO = struct {
-    input_reqs: ArrayList(Req),
-    pq: Processing.Queue,
-    cq: Completion.Queue,
-    rng: Random.DefaultPrng,
-
-    fn init(allocator: mem.Allocator, seed: u64) !@This() {
-        return .{
-            .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
-            .pq = Processing.Queue.init(allocator, {}),
-            .cq = Completion.Queue.init(allocator, {}),
-            .rng = Random.DefaultPrng.init(seed),
-        };
-    }
-
-    fn deinit(self: *@This(), allocator: mem.Allocator) void {
-        self.input_reqs.deinit(allocator);
-        self.pq.deinit();
-        self.cq.deinit();
-    }
-
-    fn accept(self: *@This(), usr_data: u64) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
-    }
-
-    fn recv(self: *@This(), req: aio.req(FD).Recv) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .recv = req });
-    }
-
-    fn send(self: *@This(), req: aio.req(FD).Send) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .send = req });
-    }
-
-    fn flush(self: *@This()) !u32 {
-        const result = self.input_reqs.items.len;
-        _ = result;
-        @panic("TODO");
-    }
-
-    fn rand(
-        self: *@This(),
-        comptime T: type,
-        at_least: T,
-        at_most: T,
-    ) u64 {
-        return self.rng.random().intRangeAtMost(T, at_least, at_most);
-    }
-};
-
-const Req = union(enum) {
-    accept: u64,
-    recv: aio.req(FD).Recv,
-    send: aio.req(FD).Send,
-};
-
-const Processing = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
-
-    const Item = struct {
-        req: Req,
-        /// At this point it will be executed and passed to the Completion queue
-        exec_time: u64,
-    };
-
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.exec_time, b.exec_time);
-    }
-};
-
-const Completion = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
-
-    const Item = struct {
-        req: Req,
-        /// Time when it can be popped off the completion queue
-        ready_time: u64,
-        result: FD,
-    };
-
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.ready_time, b.ready_time);
-    }
-};
+//const AsyncIO = struct {
+//    input_reqs: ArrayList(Req),
+//    pq: Processing.Queue,
+//    cq: Completion.Queue,
+//    rng: Random.DefaultPrng,
+//
+//    fn init(allocator: mem.Allocator, seed: u64) !@This() {
+//        return .{
+//            .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
+//            .pq = Processing.Queue.init(allocator, {}),
+//            .cq = Completion.Queue.init(allocator, {}),
+//            .rng = Random.DefaultPrng.init(seed),
+//        };
+//    }
+//
+//    fn deinit(self: *@This(), allocator: mem.Allocator) void {
+//        self.input_reqs.deinit(allocator);
+//        self.pq.deinit();
+//        self.cq.deinit();
+//    }
+//
+//    fn accept(self: *@This(), usr_data: u64) !void {
+//        self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
+//    }
+//
+//    fn recv(self: *@This(), req: aio.req(FD).Recv) !void {
+//        self.input_reqs.appendAssumeCapacity(.{ .recv = req });
+//    }
+//
+//    fn send(self: *@This(), req: aio.req(FD).Send) !void {
+//        self.input_reqs.appendAssumeCapacity(.{ .send = req });
+//    }
+//
+//    fn flush(self: *@This()) !u32 {
+//        const result = self.input_reqs.items.len;
+//        _ = result;
+//        @panic("TODO");
+//    }
+//
+//    fn rand(
+//        self: *@This(),
+//        comptime T: type,
+//        at_least: T,
+//        at_most: T,
+//    ) u64 {
+//        return self.rng.random().intRangeAtMost(T, at_least, at_most);
+//    }
+//};
+//
+//const Req = union(enum) {
+//    accept: u64,
+//    recv: aio.req(FD).Recv,
+//    send: aio.req(FD).Send,
+//};
+//
+//const Processing = struct {
+//    const Queue = std.PriorityQueue(Item, void, compare);
+//
+//    const Item = struct {
+//        req: Req,
+//        /// At this point it will be executed and passed to the Completion queue
+//        exec_time: u64,
+//    };
+//
+//    fn compare(_: void, a: Item, b: Item) math.Order {
+//        return math.order(a.exec_time, b.exec_time);
+//    }
+//};
+//
+//const Completion = struct {
+//    const Queue = std.PriorityQueue(Item, void, compare);
+//
+//    const Item = struct {
+//        req: Req,
+//        /// Time when it can be popped off the completion queue
+//        ready_time: u64,
+//        result: FD,
+//    };
+//
+//    fn compare(_: void, a: Item, b: Item) math.Order {
+//        return math.order(a.ready_time, b.ready_time);
+//    }
+//};
 
 //const heap = std.heap;
 //const math = std.math;

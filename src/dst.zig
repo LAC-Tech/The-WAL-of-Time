@@ -1,12 +1,11 @@
 const std = @import("std");
 
 const sim = @import("./sim.zig");
-const event_loop = @import("./event_loop.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    const allocator = arena.allocator();
+    //const allocator = arena.allocator();
 
     var args = std.process.args();
     _ = args.skip();
@@ -20,10 +19,10 @@ pub fn main() !void {
 
     std.debug.print("Seed = {x}\n", .{seed});
 
-    var simulator = try sim.Simulator.init(allocator, seed);
-    defer simulator.deinit(allocator);
+    //var simulator = try sim.Simulator.init(allocator, seed);
+    //defer simulator.deinit(allocator);
 
-    simulator.tick();
+    //simulator.tick();
 
     @panic("TODO");
 }

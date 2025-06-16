@@ -1,4 +1,5 @@
 const std = @import("std");
+const debug = std.debug;
 
 const core = @import("./core.zig");
 const sim = @import("./sim.zig");
@@ -20,25 +21,17 @@ pub fn main() !void {
 
     std.debug.print("Seed = {x}\n", .{seed});
 
-    var aio = sim.AsyncIO.init();
+    var rng = std.Random.DefaultPrng.init(seed);
+
+    var aio = sim.AsyncIO.init(allocator, &rng);
     defer aio.deinit();
 
     const InMem = core.InMem(sim.FD, sim.fd_eql, sim.Req);
     var in_mem = try InMem.init(allocator);
     defer in_mem.deinit(allocator);
 
-    //const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
-    //debug.assert(try aio.flush(initiaReqs) == initiaReqs.len);
-
-    //debug.print("The WAL weaves as the WAL wills\n", .{});
-
-    //while (true) {
-    //    const aio_res = try aio.wait_for_res();
-    //    const reqs = try in_mem.res_with_ctx(aio_res);
-    //    debug.assert(try aio.flush(reqs) == reqs.len);
-    //}
-
-    @panic("TODO");
+    const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
+    debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 }
 
 test {

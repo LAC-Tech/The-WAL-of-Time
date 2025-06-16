@@ -48,8 +48,8 @@ pub const AsyncIO = struct {
     }
 
     /// Number of entries submitted
-    pub fn send(self: *@This(), sqes: []const linux.io_uring_sqe) !u32 {
-        for (sqes) |sqe| {
+    pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
+        for (reqs) |sqe| {
             const vacant_sqe = try self.ring.get_sqe();
             vacant_sqe.* = sqe;
         }

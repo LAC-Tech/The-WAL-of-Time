@@ -1,12 +1,98 @@
 //! Simulated Async IO, for use with Deterministic Simulation Testing
 
+const std = @import("std");
+const math = std.math;
+const mem = std.mem;
+const testing = std.testing;
+
+const Rng = std.Random.DefaultPrng;
+
+const config = struct {
+    const completion_time = RandRange(u64).init(1, 10);
+    const user_time = RandRange(u64).init(1, 5);
+};
+
+fn RandRange(comptime T: type) type {
+    return struct {
+        at_least: T,
+        at_most: T,
+
+        fn init(at_least: T, at_most: T) @This() {
+            return .{ .at_least = at_least, .at_most = at_most };
+        }
+
+        fn gen(self: @This(), rng: anytype) T {
+            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
+        }
+    };
+}
+
 pub const AsyncIO = struct {
-    pub fn init() @This() {
-        return .{};
+    sq: Submitted.Queue,
+    cq: Completed.Queue,
+    socket_fd: FD,
+    rng: *Rng,
+
+    pub fn init(allocator: mem.Allocator, rng: *Rng) @This() {
+        return .{
+            .sq = Submitted.Queue.init(allocator, {}),
+            .cq = Completed.Queue.init(allocator, {}),
+            .socket_fd = rng.random().int(FD),
+            .rng = rng,
+        };
     }
 
-    pub fn deinit(self: @This()) void {
-        _ = self;
+    pub fn deinit(self: *@This()) void {
+        self.sq.deinit();
+        self.cq.deinit();
+    }
+
+    /// Number of entries submitted
+    pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
+        for (reqs) |r| {
+            const item = Submitted.Item{
+                .req = r,
+                .exec_time = config.completion_time.gen(self.rng),
+            };
+
+            try self.sq.add(item);
+        }
+
+        return @intCast(reqs.len);
+    }
+};
+
+test "simulator init & deinit" {
+    var aio = try AsyncIO.init(testing.allocator);
+    defer aio.deinit(testing.allocator);
+}
+
+const Submitted = struct {
+    const Queue = std.PriorityQueue(Item, void, compare);
+
+    const Item = struct {
+        req: Req.T,
+        /// At this point it will be completed
+        exec_time: u64,
+    };
+
+    fn compare(_: void, a: Item, b: Item) math.Order {
+        return math.order(a.exec_time, b.exec_time);
+    }
+};
+
+const Completed = struct {
+    const Queue = std.PriorityQueue(Item, void, compare);
+
+    const Item = struct {
+        req: Req.T,
+        /// When the caller will get it
+        departure_time: u64,
+        result: FD,
+    };
+
+    fn compare(_: void, a: Item, b: Item) math.Order {
+        return math.order(a.ready_time, b.ready_time);
     }
 };
 
@@ -46,18 +132,6 @@ pub fn fd_eql(a: FD, b: FD) bool {
     return a == b;
 }
 
-//const std = @import("std");
-//const math = std.math;
-//const mem = std.mem;
-//const ArrayList = std.ArrayListUnmanaged;
-//const Random = std.Random;
-//const testing = std.testing;
-//
-//const aio = @import("./async_io.zig");
-//const util = @import("./util.zig");
-//const core = @import("./core.zig");
-//const event_loop = @import("./event_loop.zig");
-//
 //pub const Simulator = struct {
 //    const InMem = core.InMem(FD, fd_eql);
 //
@@ -84,31 +158,6 @@ pub fn fd_eql(a: FD, b: FD) bool {
 //    }
 //};
 //
-//test "simulator init & deinit" {
-//    var simulator = try Simulator.init(testing.allocator, testing.random_seed);
-//    defer simulator.deinit(testing.allocator);
-//}
-//
-//fn RandRange(comptime T: type) type {
-//    return struct {
-//        at_least: T,
-//        at_most: T,
-//
-//        fn init(at_least: T, at_most: T) @This() {
-//            return .{ .at_least = at_least, .at_most = at_most };
-//        }
-//
-//        fn gen(self: @This(), rng: anytype) T {
-//            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
-//        }
-//    };
-//}
-//
-//const config = struct {
-//    const kernel_process_time = RandRange(u64).init(1, 10);
-//    const completion_transfer_time = RandRange(u64).init(1, 5);
-//    const flush_time = RandRange(u64).init(1, 5);
-//};
 //
 //const DebugLog = struct {
 //    file: std.fs.File,

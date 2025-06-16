@@ -1,4 +1,50 @@
-//! Deterministic Simulation Tester
+//! Simulated Async IO, for use with Deterministic Simulation Testing
+
+pub const AsyncIO = struct {
+    pub fn init() @This() {
+        return .{};
+    }
+
+    pub fn deinit(self: @This()) void {
+        _ = self;
+    }
+};
+
+pub const Req = struct {
+    pub const T = union(enum) { accept: struct { usr_data: u64, socket_fd: FD } };
+
+    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
+        return .{
+            .accept = .{ .usr_data = usr_data, .socket_fd = socket_fd },
+        };
+    }
+
+    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
+        return .{
+            .recv = .{
+                .usr_data = usr_data,
+                .socket_fd = socket_fd,
+                .buf = buf,
+            },
+        };
+    }
+
+    pub fn send(usr_data: u64, socket_fd: FD, buf: []u8) T {
+        return .{
+            .recv = .{
+                .usr_data = usr_data,
+                .socket_fd = socket_fd,
+                .buf = buf,
+            },
+        };
+    }
+};
+
+pub const FD = usize;
+
+pub fn fd_eql(a: FD, b: FD) bool {
+    return a == b;
+}
 
 //const std = @import("std");
 //const math = std.math;
@@ -41,12 +87,6 @@
 //test "simulator init & deinit" {
 //    var simulator = try Simulator.init(testing.allocator, testing.random_seed);
 //    defer simulator.deinit(testing.allocator);
-//}
-//
-//pub const FD = usize;
-//
-//pub fn fd_eql(a: FD, b: FD) bool {
-//    return a == b;
 //}
 //
 //fn RandRange(comptime T: type) type {

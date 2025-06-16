@@ -23,14 +23,14 @@ pub fn main() !void {
             defer in_mem.deinit(allocator);
 
             const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
-            debug.assert(try aio.flush(initiaReqs) == initiaReqs.len);
+            debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
             debug.print("The WAL weaves as the WAL wills\n", .{});
 
             while (true) {
-                const aio_res = try aio.wait_for_res();
+                const aio_res = try aio.await_res();
                 const reqs = try in_mem.res_with_ctx(aio_res);
-                debug.assert(try aio.flush(reqs) == reqs.len);
+                debug.assert(try aio.send(reqs) == reqs.len);
             }
         },
         else => @panic("No async io for this OS"),

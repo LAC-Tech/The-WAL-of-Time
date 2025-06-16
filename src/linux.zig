@@ -6,37 +6,6 @@ const posix = std.posix;
 
 const aio = @import("./async_io.zig");
 
-pub const FD = posix.fd_t;
-
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
-
-pub const Req = struct {
-    pub const T = linux.io_uring_sqe;
-
-    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
-        var result = mem.zeroes(T);
-        result.prep_multishot_accept(socket_fd, null, null, 0);
-        result.user_data = usr_data;
-        return result;
-    }
-
-    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
-        var result = mem.zeroes(T);
-        result.prep_recv(socket_fd, buf, 0);
-        result.user_data = usr_data;
-        return result;
-    }
-
-    pub fn send(usr_data: u64, socket_fd: FD, buf: []const u8) T {
-        var result = mem.zeroes(T);
-        result.prep_send(socket_fd, buf, 0);
-        result.user_data = usr_data;
-        return result;
-    }
-};
-
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
@@ -70,10 +39,7 @@ pub const AsyncIO = struct {
         const backlog = 128;
         try posix.listen(fd, backlog);
 
-        return .{
-            .ring = ring,
-            .socket_fd = fd,
-        };
+        return .{ .ring = ring, .socket_fd = fd };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -82,7 +48,7 @@ pub const AsyncIO = struct {
     }
 
     /// Number of entries submitted
-    pub fn flush(self: *@This(), sqes: []const linux.io_uring_sqe) !u32 {
+    pub fn send(self: *@This(), sqes: []const linux.io_uring_sqe) !u32 {
         for (sqes) |sqe| {
             const vacant_sqe = try self.ring.get_sqe();
             vacant_sqe.* = sqe;
@@ -91,7 +57,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !aio.Res(FD) {
+    pub fn await_res(self: *@This()) !aio.Res(FD) {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -100,5 +66,36 @@ pub const AsyncIO = struct {
         }
 
         return .{ .rc = cqe.res, .usr_data = cqe.user_data };
+    }
+};
+
+pub const FD = posix.fd_t;
+
+pub fn fd_eql(a: FD, b: FD) bool {
+    return a == b;
+}
+
+pub const Req = struct {
+    pub const T = linux.io_uring_sqe;
+
+    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
+        var result = mem.zeroes(T);
+        result.prep_multishot_accept(socket_fd, null, null, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
+        var result = mem.zeroes(T);
+        result.prep_recv(socket_fd, buf, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn send(usr_data: u64, socket_fd: FD, buf: []const u8) T {
+        var result = mem.zeroes(T);
+        result.prep_send(socket_fd, buf, 0);
+        result.user_data = usr_data;
+        return result;
     }
 };

@@ -3,6 +3,38 @@
 const std = @import("std");
 const mem = std.mem;
 
+pub fn SortedVec(
+    comptime T: type,
+    comptime capacity: usize,
+    comptime lessThan: fn (lhs: T, rhs: T) bool,
+) type {
+    return struct {
+        list: std.BoundedArray(T, capacity),
+
+        pub fn init() !@This() {
+            return .{ .list = try std.BoundedArray(T, capacity).init(0) };
+        }
+
+        pub fn insert(self: *@This(), value: T) !void {
+            try self.list.append(value);
+            std.sort.insertion(T, self.list.slice(), {}, lessThan);
+        }
+
+        pub fn popIf(self: *@This(), pred: fn (T) bool) ?T {
+            if (self.list.len == 0) return null;
+            const last = self.list.get(self.list.len - 1);
+            if (pred(last)) {
+                return self.list.pop();
+            }
+            return null;
+        }
+
+        pub fn constSlice(self: *@This()) []const T {
+            return self.list.constSlice();
+        }
+    };
+}
+
 const Err = error{ Overflow, Duplicate };
 
 pub fn SlotMap(

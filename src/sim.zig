@@ -5,6 +5,9 @@ const math = std.math;
 const mem = std.mem;
 const testing = std.testing;
 
+const aio = @import("./async_io.zig");
+const util = @import("./util.zig");
+
 const Rng = std.Random.DefaultPrng;
 
 const config = struct {
@@ -28,76 +31,103 @@ fn RandRange(comptime T: type) type {
 }
 
 pub const AsyncIO = struct {
-    sq: Submitted.Queue,
-    cq: Completed.Queue,
+    const Submitted = TickQueue(Req.T, 8);
+    const Completed = TickQueue(aio.Res(FD), 8);
+
+    ss: Submitted,
+    cs: Completed,
     socket_fd: FD,
     rng: *Rng,
+    ticks: *const u64,
 
-    pub fn init(allocator: mem.Allocator, rng: *Rng) @This() {
+    pub fn init(
+        rng: *Rng,
+        ticks: *const u64,
+    ) !@This() {
         return .{
-            .sq = Submitted.Queue.init(allocator, {}),
-            .cq = Completed.Queue.init(allocator, {}),
+            .ss = try Submitted.init(ticks),
+            .cs = try Completed.init(ticks),
             .socket_fd = rng.random().int(FD),
             .rng = rng,
+            .ticks = ticks,
         };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.sq.deinit();
-        self.cq.deinit();
     }
 
     /// Number of entries submitted
     pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
         for (reqs) |r| {
-            const item = Submitted.Item{
-                .req = r,
-                .exec_time = config.completion_time.gen(self.rng),
-            };
-
-            try self.sq.add(item);
+            try self.ss.insert(
+                r,
+                self.ticks.* + config.completion_time.gen(self.rng),
+            );
         }
 
         return @intCast(reqs.len);
     }
+
+    pub fn tick(self: *@This()) !?aio.Res(FD) {
+        if (self.ss.pop()) |req| {
+            switch (req) {
+                .accept => |a| {
+                    a.socket_fd
+            },
+                .recv => |r| {},
+                .send => |s| {},
+
+                // TODO: execute request
+            }
+
+            // TODO: put item on completed
+        }
+
+        return self.cs.pop();
+    }
 };
 
-test "simulator init & deinit" {
-    var aio = try AsyncIO.init(testing.allocator);
-    defer aio.deinit(testing.allocator);
+/// Small, sorted arrays that pop elements when it's time
+fn TickQueue(comptime Item: type, comptime capacity: usize) type {
+    return struct {
+        const Elem = struct { item: Item, pop_time: u64 };
+
+        fn lessThan(_: void, a: Elem, b: Elem) bool {
+            return a.pop_time > b.pop_time;
+        }
+
+        const Elems = std.BoundedArray(Elem, capacity);
+
+        elems: std.BoundedArray(Elem, capacity),
+        tick: *const u64,
+
+        fn init(tick: *const u64) !@This() {
+            return .{ .elems = try Elems.init(0), .tick = tick };
+        }
+
+        fn insert(self: *@This(), item: Item, pop_time: u64) !void {
+            try self.elems.append(.{ .item = item, .pop_time = pop_time });
+            std.sort.insertion(Elem, self.elems.slice(), {}, lessThan);
+        }
+
+        fn pop(self: *@This()) ?Item {
+            if (self.list.len == 0) return null;
+            const last = self.list.get(self.list.len - 1);
+            if (last.pop_time > self.time.*) {
+                return null;
+            }
+            return self.list.pop().item;
+        }
+
+        fn constSlice(self: *@This()) []const Elem {
+            return self.list.constSlice();
+        }
+    };
 }
 
-const Submitted = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
-
-    const Item = struct {
-        req: Req.T,
-        /// At this point it will be completed
-        exec_time: u64,
-    };
-
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.exec_time, b.exec_time);
-    }
-};
-
-const Completed = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
-
-    const Item = struct {
-        req: Req.T,
-        /// When the caller will get it
-        departure_time: u64,
-        result: FD,
-    };
-
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.ready_time, b.ready_time);
-    }
-};
-
 pub const Req = struct {
-    pub const T = union(enum) { accept: struct { usr_data: u64, socket_fd: FD } };
+    pub const T = union(enum) {
+        accept: struct { usr_data: u64, socket_fd: FD },
+        recv: struct { usr_data: u64, socket_fd: FD, buf: []u8 },
+        send: struct { usr_data: u64, socket_fd: FD, buf: []const u8 },
+    };
 
     pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
         return .{
@@ -251,42 +281,6 @@ pub fn fd_eql(a: FD, b: FD) bool {
 //    recv: aio.req(FD).Recv,
 //    send: aio.req(FD).Send,
 //};
-//
-//const Processing = struct {
-//    const Queue = std.PriorityQueue(Item, void, compare);
-//
-//    const Item = struct {
-//        req: Req,
-//        /// At this point it will be executed and passed to the Completion queue
-//        exec_time: u64,
-//    };
-//
-//    fn compare(_: void, a: Item, b: Item) math.Order {
-//        return math.order(a.exec_time, b.exec_time);
-//    }
-//};
-//
-//const Completion = struct {
-//    const Queue = std.PriorityQueue(Item, void, compare);
-//
-//    const Item = struct {
-//        req: Req,
-//        /// Time when it can be popped off the completion queue
-//        ready_time: u64,
-//        result: FD,
-//    };
-//
-//    fn compare(_: void, a: Item, b: Item) math.Order {
-//        return math.order(a.ready_time, b.ready_time);
-//    }
-//};
-
-//const heap = std.heap;
-//const math = std.math;
-//const mem = std.mem;
-//const posix = std.posix;
-//const rand = std.Random;
-//const testing = std.testing;
 //
 //const ArrayList = std.ArrayListUnmanaged;
 //const PriorityQueue = std.PriorityQueue;

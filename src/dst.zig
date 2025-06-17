@@ -9,22 +9,14 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var args = std.process.args();
-    _ = args.skip();
-
-    const seed: u64 = if (args.next()) |arg|
-        std.fmt.parseInt(u64, arg, 16) catch {
-            @panic("arg must be an unsigned integer");
-        }
-    else
-        std.crypto.random.int(u64);
-
+    const seed = get_seed();
     std.debug.print("Seed = {x}\n", .{seed});
 
     var rng = std.Random.DefaultPrng.init(seed);
+    var ticks: u64 = 0;
 
-    var aio = sim.AsyncIO.init(allocator, &rng);
-    defer aio.deinit();
+    var aio = try sim.AsyncIO.init(&rng, &ticks);
+    //defer aio.deinit();
 
     const InMem = core.InMem(sim.FD, sim.fd_eql, sim.Req);
     var in_mem = try InMem.init(allocator);
@@ -32,6 +24,22 @@ pub fn main() !void {
 
     const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
     debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
+
+    while (ticks < 1000) : (ticks += 1) {
+        _ = try aio.tick();
+    }
+}
+
+fn get_seed() u64 {
+    var args = std.process.args();
+    _ = args.skip();
+
+    return if (args.next()) |arg|
+        std.fmt.parseInt(u64, arg, 16) catch {
+            @panic("arg must be an unsigned integer");
+        }
+    else
+        std.crypto.random.int(u64);
 }
 
 test {

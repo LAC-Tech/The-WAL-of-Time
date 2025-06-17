@@ -15,6 +15,7 @@ pub fn StateMachine(
         FD.ClientSock.T,
         FD.ClientSock.eql,
         limits.max_clients,
+        .{ .duplicates = false },
     );
     const AioReqs = std.BoundedArray(AIOReq.T, 2);
 

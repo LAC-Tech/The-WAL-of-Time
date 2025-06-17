@@ -6,6 +6,7 @@ const mem = std.mem;
 const testing = std.testing;
 
 const aio = @import("./async_io.zig");
+const Res = aio.Res(FD);
 const util = @import("./util.zig");
 
 const Rng = std.Random.DefaultPrng;
@@ -32,7 +33,7 @@ fn RandRange(comptime T: type) type {
 
 pub const AsyncIO = struct {
     const Submitted = TickQueue(Req.T, 8);
-    const Completed = TickQueue(aio.Res(FD), 8);
+    const Completed = TickQueue(Res, 8);
 
     ss: Submitted,
     cs: Completed,
@@ -65,16 +66,21 @@ pub const AsyncIO = struct {
         return @intCast(reqs.len);
     }
 
-    pub fn tick(self: *@This()) !?aio.Res(FD) {
+    pub fn tick(self: *@This()) !?Res {
         if (self.ss.pop()) |req| {
             switch (req) {
                 .accept => |a| {
-                    a.socket_fd
-            },
-                .recv => |r| {},
-                .send => |s| {},
-
-                // TODO: execute request
+                    _ = a;
+                    @panic("TODO: exec accept req");
+                },
+                .recv => |r| {
+                    _ = r;
+                    @panic("TODO: exec recv req");
+                },
+                .send => |s| {
+                    _ = s;
+                    @panic("TODO: exec send send");
+                },
             }
 
             // TODO: put item on completed
@@ -108,12 +114,12 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
         }
 
         fn pop(self: *@This()) ?Item {
-            if (self.list.len == 0) return null;
-            const last = self.list.get(self.list.len - 1);
-            if (last.pop_time > self.time.*) {
+            if (self.elems.len == 0) return null;
+            const last = self.elems.get(self.elems.len - 1);
+            if (last.pop_time > self.tick.*) {
                 return null;
             }
-            return self.list.pop().item;
+            return self.elems.pop().?.item;
         }
 
         fn constSlice(self: *@This()) []const Elem {

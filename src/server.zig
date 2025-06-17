@@ -18,11 +18,11 @@ pub fn main() !void {
             var aio = try linux.AsyncIO.init();
             defer aio.deinit();
 
-            const InMem = core.InMem(linux.FD, linux.fd_eql, linux.Req);
+            const InMem = core.InMem(linux.FD, linux.Req);
             var in_mem = try InMem.init(allocator);
             defer in_mem.deinit(allocator);
 
-            const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
+            const initiaReqs = try in_mem.initial_aio_req(aio.server_fd);
             debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
             debug.print("The WAL weaves as the WAL wills\n", .{});

@@ -5,8 +5,7 @@ const math = std.math;
 const mem = std.mem;
 const testing = std.testing;
 
-const aio = @import("./async_io.zig");
-const Res = aio.Res(FD);
+pub const FD = @import("./fd.zig").module(usize);
 const util = @import("./util.zig");
 
 const Rng = std.Random.DefaultPrng;
@@ -33,11 +32,11 @@ fn RandRange(comptime T: type) type {
 
 pub const AsyncIO = struct {
     const Submitted = TickQueue(Req.T, 8);
-    const Completed = TickQueue(Res, 8);
+    const Completed = TickQueue(FD.IORes, 8);
 
     ss: Submitted,
     cs: Completed,
-    socket_fd: FD,
+    socket_fd: FD.ServerSock.T,
     rng: *Rng,
     ticks: *const u64,
 
@@ -48,7 +47,7 @@ pub const AsyncIO = struct {
         return .{
             .ss = try Submitted.init(ticks),
             .cs = try Completed.init(ticks),
-            .socket_fd = rng.random().int(FD),
+            .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
             .rng = rng,
             .ticks = ticks,
         };
@@ -66,7 +65,7 @@ pub const AsyncIO = struct {
         return @intCast(reqs.len);
     }
 
-    pub fn tick(self: *@This()) !?Res {
+    pub fn tick(self: *@This()) !?FD.IORes {
         if (self.ss.pop()) |req| {
             switch (req) {
                 .accept => |a| {
@@ -130,43 +129,29 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
 
 pub const Req = struct {
     pub const T = union(enum) {
-        accept: struct { usr_data: u64, socket_fd: FD },
-        recv: struct { usr_data: u64, socket_fd: FD, buf: []u8 },
-        send: struct { usr_data: u64, socket_fd: FD, buf: []const u8 },
+        accept: struct { usr_data: u64, fd: FD.ServerSock.T },
+        recv: struct { usr_data: u64, fd: FD, buf: []u8 },
+        send: struct { usr_data: u64, fd: FD, buf: []const u8 },
     };
 
-    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
+    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
         return .{
-            .accept = .{ .usr_data = usr_data, .socket_fd = socket_fd },
+            .accept = .{ .usr_data = usr_data, .fd = fd },
         };
     }
 
-    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
+    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
         return .{
-            .recv = .{
-                .usr_data = usr_data,
-                .socket_fd = socket_fd,
-                .buf = buf,
-            },
+            .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
         };
     }
 
-    pub fn send(usr_data: u64, socket_fd: FD, buf: []u8) T {
+    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
         return .{
-            .recv = .{
-                .usr_data = usr_data,
-                .socket_fd = socket_fd,
-                .buf = buf,
-            },
+            .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
         };
     }
 };
-
-pub const FD = usize;
-
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
 
 //pub const Simulator = struct {
 //    const InMem = core.InMem(FD, fd_eql);

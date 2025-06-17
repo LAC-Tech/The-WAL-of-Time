@@ -18,7 +18,7 @@ pub fn main() !void {
     var aio = try sim.AsyncIO.init(&rng, &ticks);
     //defer aio.deinit();
 
-    const InMem = core.InMem(sim.FD, sim.fd_eql, sim.Req);
+    const InMem = core.InMem(sim.FD, sim.Req);
     var in_mem = try InMem.init(allocator);
     defer in_mem.deinit(allocator);
 

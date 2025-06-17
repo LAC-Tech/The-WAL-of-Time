@@ -4,13 +4,13 @@ const mem = std.mem;
 const net = std.net;
 const posix = std.posix;
 
-const aio = @import("./async_io.zig");
+pub const FD = @import("./fd.zig").module(posix.socket_t);
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
     ring: linux.IoUring,
-    socket_fd: posix.socket_t,
+    server_fd: FD.ServerSock.T,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
@@ -39,12 +39,12 @@ pub const AsyncIO = struct {
         const backlog = 128;
         try posix.listen(fd, backlog);
 
-        return .{ .ring = ring, .socket_fd = fd };
+        return .{ .ring = ring, .server_fd = @enumFromInt(fd) };
     }
 
     pub fn deinit(self: *@This()) void {
         self.ring.deinit();
-        posix.close(self.socket_fd);
+        posix.close(@intFromEnum(self.server_fd));
     }
 
     /// Number of entries submitted
@@ -57,7 +57,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn await_res(self: *@This()) !aio.Res(FD) {
+    pub fn await_res(self: *@This()) !FD.IORes {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -69,32 +69,26 @@ pub const AsyncIO = struct {
     }
 };
 
-pub const FD = posix.fd_t;
-
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
-
 pub const Req = struct {
     pub const T = linux.io_uring_sqe;
 
-    pub fn accept_multishot(usr_data: u64, socket_fd: FD) T {
+    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
         var result = mem.zeroes(T);
-        result.prep_multishot_accept(socket_fd, null, null, 0);
+        result.prep_multishot_accept(@intFromEnum(fd), null, null, 0);
         result.user_data = usr_data;
         return result;
     }
 
-    pub fn recv(usr_data: u64, socket_fd: FD, buf: []u8) T {
+    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
         var result = mem.zeroes(T);
-        result.prep_recv(socket_fd, buf, 0);
+        result.prep_recv(@intFromEnum(fd), buf, 0);
         result.user_data = usr_data;
         return result;
     }
 
-    pub fn send(usr_data: u64, socket_fd: FD, buf: []const u8) T {
+    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
         var result = mem.zeroes(T);
-        result.prep_send(socket_fd, buf, 0);
+        result.prep_send(@intFromEnum(fd), buf, 0);
         result.user_data = usr_data;
         return result;
     }

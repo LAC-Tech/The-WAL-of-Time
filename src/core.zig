@@ -2,7 +2,6 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
-const aio = @import("./async_io.zig");
 const limits = @import("limits.zig");
 const util = @import("./util.zig");
 
@@ -10,10 +9,13 @@ const util = @import("./util.zig");
 /// node is running
 pub fn InMem(
     comptime FD: type,
-    comptime fd_eql: fn (FD, FD) bool,
     comptime AIOReq: type,
 ) type {
-    const Clients = util.SlotMap(limits.max_clients, FD, fd_eql);
+    const Clients = util.SlotMap(
+        FD.ClientSock.T,
+        FD.ClientSock.eql,
+        limits.max_clients,
+    );
     const AioReqs = std.BoundedArray(AIOReq.T, 2);
 
     return struct {
@@ -35,9 +37,12 @@ pub fn InMem(
             allocator.free(self.recv_buf);
         }
 
-        pub fn initial_aio_req(self: *@This(), socket_fd: FD) ![]const AIOReq.T {
+        pub fn initial_aio_req(
+            self: *@This(),
+            fd: FD.ServerSock.T,
+        ) ![]const AIOReq.T {
             const usr_data: UsrData = .{ .op = .accept };
-            const req = AIOReq.accept_multishot(@bitCast(usr_data), socket_fd);
+            const req = AIOReq.accept_multishot(@bitCast(usr_data), fd);
             try self.aio_req_buf.append(req);
             return self.aio_req_buf.constSlice();
         }
@@ -56,14 +61,14 @@ pub fn InMem(
             return AIOReq.recv(usr_data, fd_client, self.recv_buf);
         }
 
-        pub fn res_with_ctx(self: *@This(), res: aio.Res(FD)) ![]const AIOReq.T {
+        pub fn res_with_ctx(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
             self.aio_req_buf.clear();
             const res_usr_data: UsrData = @bitCast(res.usr_data);
 
             switch (res_usr_data.op) {
                 .accept => {
-                    const fd_client: FD = res.rc;
-                    const id = try self.clients.add(fd_client);
+                    const fd: FD.ClientSock.T = @enumFromInt(res.rc);
+                    const id = try self.clients.add(fd);
 
                     const usr_data: u64 = @bitCast(UsrData{
                         .op = .send,
@@ -72,7 +77,7 @@ pub fn InMem(
 
                     const req = AIOReq.send(
                         usr_data,
-                        fd_client,
+                        fd,
                         "connection acknowledged\n",
                     );
 
@@ -103,26 +108,12 @@ pub fn InMem(
 
 const Op = enum(u8) { accept, send, recv };
 
-pub fn Res(comptime FD: type) type {
-    return union(Op) {
-        accept: struct {
-            reqs: struct { send: aio.req(FD).Send },
-        },
-        send: struct { reqs: struct { recv: aio.req(FD).Recv } },
-        recv: struct {
-            msg: []const u8,
-            reqs: struct { recv: aio.req(FD).Recv },
-        },
-    };
-}
-
-/// Pata passed to async io systems
+/// Data passed to async io systems
 /// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
-
-// Zig tagged unions can't be bitcast.
-// So we hack it together like C
 const UsrData = packed struct(u64) {
     op: Op,
+    /// Zig tagged unions can't be bitcast.
+    /// So we hack it together like C
     payload: packed union { client_id: u8 } = undefined,
     _padding: u48 = 0,
 };

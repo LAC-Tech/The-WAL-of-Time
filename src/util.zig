@@ -38,9 +38,9 @@ pub fn SortedVec(
 const Err = error{ Overflow, Duplicate };
 
 pub fn SlotMap(
-    comptime max_slots: usize,
     comptime T: type,
     comptime eql: fn (T, T) bool,
+    comptime max_slots: usize,
 ) type {
     const Slot = u8;
 

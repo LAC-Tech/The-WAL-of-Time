@@ -11,7 +11,7 @@ const Err = error{ Overflow, Duplicate };
 pub fn SlotMap(
     comptime T: type,
     comptime eql: fn (T, T) bool,
-    comptime max_slots: usize,
+    comptime max_slots: u8,
     comptime opts: struct { duplicates: bool },
 ) type {
     const Slot = u8;
@@ -27,8 +27,11 @@ pub fn SlotMap(
         used_slots: UInt,
 
         pub fn init(allocator: mem.Allocator) !@This() {
+            const vals = try allocator.alloc(T, @intCast(max_slots));
+            @memset(vals, undefined);
+
             return .{
-                .vals = try allocator.alloc(T, max_slots),
+                .vals = vals,
                 .used_slots = 0,
             };
         }
@@ -37,36 +40,38 @@ pub fn SlotMap(
             allocator.free(self.vals);
         }
 
-        pub fn add(
-            self: *@This(),
-            val: T,
-        ) Err!Slot {
+        pub fn add(self: *@This(), val: T) Err!Slot {
             if (!opts.duplicates) {
-                for (self.vals) |existing| {
-                    if (eql(existing, val))
-                        return error.Duplicate;
+                var slot: Slot = 0;
+                while (slot < max_slots) : (slot += 1) {
+                    if (((self.used_slots >> slot) & 1) == 0) continue;
+                    if (eql(self.vals[slot], val)) return error.Duplicate;
                 }
             }
 
-            const free_slot = @ctz(self.used_slots ^ math.maxInt(UInt));
+            const free_slot = @ctz(~self.used_slots);
             if (free_slot >= max_slots) return error.Overflow;
-            self.used_slots |= @as(UInt, 1) << @intCast(free_slot);
+            self.used_slots |= 1 << free_slot;
             self.vals[free_slot] = val;
             return @intCast(free_slot);
         }
 
         pub fn get(self: @This(), slot: Slot) ?T {
-            if (slot >= max_slots or (self.used_slots & (@as(UInt, 1) << slot)) == 0) {
+            if (((self.used_slots >> slot) & 1) == 0) {
                 return null;
             }
+
             return self.vals[slot];
         }
 
-        fn remove(self: *@This(), slot: Slot) T {
-            debug.assert(slot < max_slots and (self.used_slots & (@as(UInt, 1) << slot)) != 0);
-            self.used_slots &= ~(@as(UInt, 1) << slot);
-            const removed = self.vals[slot];
-            return removed;
+        fn remove(self: *@This(), slot: Slot) ?T {
+            if (((self.used_slots >> slot) & 1) == 0) {
+                return null;
+            }
+            self.used_slots &= ~(1 << slot);
+            const value = self.vals[slot];
+            self.vals[slot] = undefined;
+            return value;
         }
     };
 }

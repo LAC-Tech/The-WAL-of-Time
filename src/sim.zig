@@ -34,8 +34,8 @@ pub const AsyncIO = struct {
     const Submitted = TickQueue(Req.T, 8);
     const Completed = TickQueue(FD.IORes, 8);
 
-    ss: Submitted,
-    cs: Completed,
+    sq: Submitted,
+    cq: Completed,
     socket_fd: FD.ServerSock.T,
     rng: *Rng,
     ticks: *const u64,
@@ -45,8 +45,8 @@ pub const AsyncIO = struct {
         ticks: *const u64,
     ) !@This() {
         return .{
-            .ss = try Submitted.init(ticks),
-            .cs = try Completed.init(ticks),
+            .sq = try Submitted.init(ticks),
+            .cq = try Completed.init(ticks),
             .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
             .rng = rng,
             .ticks = ticks,
@@ -56,7 +56,7 @@ pub const AsyncIO = struct {
     /// Number of entries submitted
     pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
         for (reqs) |r| {
-            try self.ss.insert(
+            try self.sq.insert(
                 r,
                 self.ticks.* + config.completion_time.gen(self.rng),
             );
@@ -66,7 +66,7 @@ pub const AsyncIO = struct {
     }
 
     pub fn tick(self: *@This()) !?FD.IORes {
-        if (self.ss.pop()) |req| {
+        if (self.sq.pop()) |req| {
             switch (req) {
                 .accept => |a| {
                     _ = a;
@@ -85,7 +85,7 @@ pub const AsyncIO = struct {
             // TODO: put item on completed
         }
 
-        return self.cs.pop();
+        return self.cq.pop();
     }
 };
 
@@ -130,8 +130,8 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
 pub const Req = struct {
     pub const T = union(enum) {
         accept: struct { usr_data: u64, fd: FD.ServerSock.T },
-        recv: struct { usr_data: u64, fd: FD, buf: []u8 },
-        send: struct { usr_data: u64, fd: FD, buf: []const u8 },
+        recv: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []u8 },
+        send: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []const u8 },
     };
 
     pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
@@ -146,9 +146,9 @@ pub const Req = struct {
         };
     }
 
-    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
+    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
         return .{
-            .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
+            .send = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
         };
     }
 };

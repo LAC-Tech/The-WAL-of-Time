@@ -26,7 +26,9 @@ pub fn main() !void {
     debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
     while (ticks < 1000) : (ticks += 1) {
-        _ = try aio.tick();
+        const res = try aio.tick() orelse continue;
+        const reqs = try in_mem.res_with_ctx(res);
+        debug.assert(try aio.send(reqs) == reqs.len);
     }
 }
 

@@ -153,33 +153,6 @@ pub const Req = struct {
     }
 };
 
-//pub const Simulator = struct {
-//    const InMem = core.InMem(FD, fd_eql);
-//
-//    ticks: u64,
-//    aio: AsyncIO,
-//    in_mem: InMem,
-//
-//    pub fn init(allocator: mem.Allocator, seed: u64) !@This() {
-//        return .{
-//            .ticks = 0,
-//            .aio = try AsyncIO.init(allocator, seed),
-//            .in_mem = try InMem.init(allocator),
-//        };
-//    }
-//
-//    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-//        self.aio.deinit(allocator);
-//        self.in_mem.deinit(allocator);
-//    }
-//
-//    pub fn tick(self: *@This()) void {
-//        //event_loop.step(FD);
-//        self.ticks += 1;
-//    }
-//};
-//
-//
 //const DebugLog = struct {
 //    file: std.fs.File,
 //    allocator: std.mem.Allocator,
@@ -214,70 +187,6 @@ pub const Req = struct {
 //    }
 //};
 
-// TODO: single "inflight req" queue, with processing and completed items.
-// advanced time until you find a completed item and pop that, to sim blocking
-// can also receive messages
-
-//const AsyncIO = struct {
-//    input_reqs: ArrayList(Req),
-//    pq: Processing.Queue,
-//    cq: Completion.Queue,
-//    rng: Random.DefaultPrng,
-//
-//    fn init(allocator: mem.Allocator, seed: u64) !@This() {
-//        return .{
-//            .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
-//            .pq = Processing.Queue.init(allocator, {}),
-//            .cq = Completion.Queue.init(allocator, {}),
-//            .rng = Random.DefaultPrng.init(seed),
-//        };
-//    }
-//
-//    fn deinit(self: *@This(), allocator: mem.Allocator) void {
-//        self.input_reqs.deinit(allocator);
-//        self.pq.deinit();
-//        self.cq.deinit();
-//    }
-//
-//    fn accept(self: *@This(), usr_data: u64) !void {
-//        self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
-//    }
-//
-//    fn recv(self: *@This(), req: aio.req(FD).Recv) !void {
-//        self.input_reqs.appendAssumeCapacity(.{ .recv = req });
-//    }
-//
-//    fn send(self: *@This(), req: aio.req(FD).Send) !void {
-//        self.input_reqs.appendAssumeCapacity(.{ .send = req });
-//    }
-//
-//    fn flush(self: *@This()) !u32 {
-//        const result = self.input_reqs.items.len;
-//        _ = result;
-//        @panic("TODO");
-//    }
-//
-//    fn rand(
-//        self: *@This(),
-//        comptime T: type,
-//        at_least: T,
-//        at_most: T,
-//    ) u64 {
-//        return self.rng.random().intRangeAtMost(T, at_least, at_most);
-//    }
-//};
-//
-//const Req = union(enum) {
-//    accept: u64,
-//    recv: aio.req(FD).Recv,
-//    send: aio.req(FD).Send,
-//};
-//
-//const ArrayList = std.ArrayListUnmanaged;
-//const PriorityQueue = std.PriorityQueue;
-//
-//const lib = @import("./lib.zig");
-//
 //const c = @cImport({
 //    @cInclude("tui.h");
 //});

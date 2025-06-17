@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const mem = std.mem;
+const debug = std.debug;
 
 pub fn SortedVec(
     comptime T: type,
@@ -45,7 +46,7 @@ pub fn SlotMap(
     const Slot = u8;
 
     comptime {
-        std.debug.assert(@bitSizeOf(Slot) >= max_slots);
+        debug.assert(@bitSizeOf(Slot) >= max_slots);
     }
 
     return struct {

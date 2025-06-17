@@ -18,16 +18,15 @@ pub fn main() !void {
     var aio = try sim.AsyncIO.init(&rng, &ticks);
     //defer aio.deinit();
 
-    const InMem = core.InMem(sim.FD, sim.Req);
-    var in_mem = try InMem.init(allocator);
-    defer in_mem.deinit(allocator);
+    var sm = try core.StateMachine(sim.FD, sim.Req).init(allocator);
+    defer sm.deinit(allocator);
 
-    const initiaReqs = try in_mem.initial_aio_req(aio.socket_fd);
+    const initiaReqs = try sm.initial_aio_req(aio.socket_fd);
     debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
     while (ticks < 1000) : (ticks += 1) {
         const res = try aio.tick() orelse continue;
-        const reqs = try in_mem.res_with_ctx(res);
+        const reqs = try sm.transition(res);
         debug.assert(try aio.send(reqs) == reqs.len);
     }
 }

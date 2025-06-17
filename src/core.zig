@@ -7,7 +7,7 @@ const util = @import("./util.zig");
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
-pub fn InMem(
+pub fn StateMachine(
     comptime FD: type,
     comptime AIOReq: type,
 ) type {
@@ -61,7 +61,7 @@ pub fn InMem(
             return AIOReq.recv(usr_data, fd_client, self.recv_buf);
         }
 
-        pub fn res_with_ctx(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
+        pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
             self.aio_req_buf.clear();
             const res_usr_data: UsrData = @bitCast(res.usr_data);
 

@@ -18,18 +18,17 @@ pub fn main() !void {
             var aio = try linux.AsyncIO.init();
             defer aio.deinit();
 
-            const InMem = core.InMem(linux.FD, linux.Req);
-            var in_mem = try InMem.init(allocator);
-            defer in_mem.deinit(allocator);
+            var sm = try core.StateMachine(linux.FD, linux.Req).init(allocator);
+            defer sm.deinit(allocator);
 
-            const initiaReqs = try in_mem.initial_aio_req(aio.server_fd);
+            const initiaReqs = try sm.initial_aio_req(aio.server_fd);
             debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
             debug.print("The WAL weaves as the WAL wills\n", .{});
 
             while (true) {
-                const aio_res = try aio.await_res();
-                const reqs = try in_mem.res_with_ctx(aio_res);
+                const res = try aio.await_res();
+                const reqs = try sm.transition(res);
                 debug.assert(try aio.send(reqs) == reqs.len);
             }
         },

@@ -2,7 +2,6 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
-const limits = @import("limits.zig");
 const util = @import("./util.zig");
 
 /// Deterministic, in-memory state machine that keeps track of things while the
@@ -10,6 +9,10 @@ const util = @import("./util.zig");
 pub fn StateMachine(
     comptime FD: type,
     comptime AIOReq: type,
+    comptime limits: struct {
+        max_clients: comptime_int,
+        write_buf_size: comptime_int,
+    },
 ) type {
     const Clients = util.SlotMap(
         FD.ClientSock.T,
@@ -106,6 +109,8 @@ pub fn StateMachine(
         }
     };
 }
+
+const Limits = struct { max_clients: usize, write_buf_size: usize };
 
 const Op = enum(u8) { accept, send, recv };
 

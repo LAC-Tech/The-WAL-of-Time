@@ -18,7 +18,11 @@ pub fn main() !void {
             var aio = try linux.AsyncIO.init();
             defer aio.deinit();
 
-            var sm = try core.StateMachine(linux.FD, linux.Req).init(allocator);
+            var sm = try core.StateMachine(
+                linux.FD,
+                linux.Req,
+                .{ .max_clients = 2, .write_buf_size = 64 },
+            ).init(allocator);
             defer sm.deinit(allocator);
 
             const initiaReqs = try sm.initial_aio_req(aio.server_fd);

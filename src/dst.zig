@@ -18,7 +18,11 @@ pub fn main() !void {
     var aio = try sim.AsyncIO.init(&rng, &ticks);
     //defer aio.deinit();
 
-    var sm = try core.StateMachine(sim.FD, sim.Req).init(allocator);
+    var sm = try core.StateMachine(
+        sim.FD,
+        sim.Req,
+        .{ .max_clients = 2, .write_buf_size = 64 },
+    ).init(allocator);
     defer sm.deinit(allocator);
 
     const initiaReqs = try sm.initial_aio_req(aio.socket_fd);

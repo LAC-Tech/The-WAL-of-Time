@@ -1,23 +1,19 @@
-//! Deterministic Simulation Tester
+//! Simulated Async IO, for use with Deterministic Simulation Testing
 
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
-const ArrayList = std.ArrayListUnmanaged;
-const Random = std.Random;
+const testing = std.testing;
 
-const aio = @import("./async_io.zig");
+pub const FD = @import("./fd.zig").module(usize);
 const util = @import("./util.zig");
 
-pub const FD = usize;
+const Rng = std.Random.DefaultPrng;
 
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
-
-const aio_msg = aio.msg(FD);
-const aio_req = aio_msg.req;
-const AioRes = aio_msg.Res;
+const config = struct {
+    const completion_time = RandRange(u64).init(1, 10);
+    const user_time = RandRange(u64).init(1, 5);
+};
 
 fn RandRange(comptime T: type) type {
     return struct {
@@ -34,178 +30,163 @@ fn RandRange(comptime T: type) type {
     };
 }
 
-const config = struct {
-    const kernel_process_time = RandRange(u64).init(1, 10);
-    const completion_transfer_time = RandRange(u64).init(1, 5);
-    const flush_time = RandRange(u64).init(1, 5);
-};
-
-pub const Time = struct {
-    _current: u64,
-
-    pub fn init() Time {
-        return .{ ._current = 0 };
-    }
-
-    fn advance(self: *Time, delta: u64) void {
-        self._current += delta;
-    }
-
-    fn now(self: Time) u64 {
-        return self._current;
-    }
-};
-
-const DebugLog = struct {
-    file: std.fs.File,
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator, seed: u64) !@This() {
-        const log_dir = "log";
-        try std.fs.cwd().makePath(log_dir);
-        const filename = try std.fmt.allocPrint(
-            allocator,
-            "{s}/log_{d}_{d}.txt",
-            .{
-                log_dir,
-                seed,
-                std.time.milliTimestamp(),
-            },
-        );
-        defer allocator.free(filename);
-        const file = try std.fs.cwd().createFile(filename, .{});
-        return .{ .file = file, .allocator = allocator };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.file.close();
-    }
-
-    pub fn write(
-        self: *@This(),
-        comptime fmt: []const u8,
-        args: anytype,
-    ) !void {
-        try self.file.writer().print(fmt, args);
-    }
-};
-
-// TODO: single "inflight req" queue, with processing and completed items.
-// advanced time until you find a completed item and pop that, to sim blocking
-// can also receive messages
-
 pub const AsyncIO = struct {
-    input_reqs: ArrayList(Req),
-    pq: Processing.Queue,
-    cq: Completion.Queue,
-    rng: Random.DefaultPrng,
-    time: *Time,
+    const Submitted = TickQueue(Req.T, 8);
+    const Completed = TickQueue(FD.IORes, 8);
 
-    pub fn init(allocator: mem.Allocator, seed: u64, time: *Time) !@This() {
+    sq: Submitted,
+    cq: Completed,
+    socket_fd: FD.ServerSock.T,
+    rng: *Rng,
+    ticks: *const u64,
+
+    pub fn init(
+        rng: *Rng,
+        ticks: *const u64,
+    ) !@This() {
         return .{
-            .input_reqs = try ArrayList(Req).initCapacity(allocator, 64),
-            .pq = Processing.Queue.init(allocator, {}),
-            .cq = Completion.Queue.init(allocator, {}),
-            .rng = Random.DefaultPrng.init(seed),
-            .time = time,
+            .sq = try Submitted.init(ticks),
+            .cq = try Completed.init(ticks),
+            .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
+            .rng = rng,
+            .ticks = ticks,
         };
     }
 
-    pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-        self.input_reqs.deinit(allocator);
-        self.pq.deinit();
-        self.cq.deinit();
-    }
-
-    pub fn accept(self: *@This(), usr_data: u64) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .accept = usr_data });
-    }
-
-    pub fn recv(self: *@This(), req: aio_req.Recv) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .recv = req });
-    }
-
-    pub fn send(self: *@This(), req: aio_req.Send) !void {
-        self.input_reqs.appendAssumeCapacity(.{ .send = req });
-    }
-
-    pub fn flush(self: *@This()) !u32 {
-        const result = self.input_reqs.items.len;
-
-        for (self.input_reqs.items) |req| {
-            // put things on the processing queue
-
-            const pqe: Processing.Item = .{
-                .req = req,
-                .exec_time = self.time.now() + config.kernel_process_time.gen(
-                    &self.rng,
-                ),
-            };
-
-            try self.pq.add(pqe);
+    /// Number of entries submitted
+    pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
+        for (reqs) |r| {
+            try self.sq.insert(
+                r,
+                self.ticks.* + config.completion_time.gen(self.rng),
+            );
         }
 
-        self.input_reqs.clearRetainingCapacity();
-        return @intCast(result);
+        return @intCast(reqs.len);
     }
 
-    fn rand(
-        self: *@This(),
-        comptime T: type,
-        at_least: T,
-        at_most: T,
-    ) u64 {
-        return self.rng.random().intRangeAtMost(T, at_least, at_most);
+    pub fn tick(self: *@This()) !?FD.IORes {
+        if (self.sq.pop()) |req| {
+            switch (req) {
+                .accept => |a| {
+                    _ = a;
+                    @panic("TODO: exec accept req");
+                },
+                .recv => |r| {
+                    _ = r;
+                    @panic("TODO: exec recv req");
+                },
+                .send => |s| {
+                    _ = s;
+                    @panic("TODO: exec send send");
+                },
+            }
+
+            // TODO: put item on completed
+        }
+
+        return self.cq.pop();
     }
 };
 
-const Req = union(enum) {
-    accept: u64,
-    recv: aio_req.Recv,
-    send: aio_req.Send,
-};
+/// Small, sorted arrays that pop elements when it's time
+fn TickQueue(comptime Item: type, comptime capacity: usize) type {
+    return struct {
+        const Elem = struct { item: Item, pop_time: u64 };
 
-const Processing = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
+        fn lessThan(_: void, a: Elem, b: Elem) bool {
+            return a.pop_time > b.pop_time;
+        }
 
-    const Item = struct {
-        req: Req,
-        /// At this point it will be executed and passed to the Completion queue
-        exec_time: u64,
+        const Elems = std.BoundedArray(Elem, capacity);
+
+        elems: std.BoundedArray(Elem, capacity),
+        tick: *const u64,
+
+        fn init(tick: *const u64) !@This() {
+            return .{ .elems = try Elems.init(0), .tick = tick };
+        }
+
+        fn insert(self: *@This(), item: Item, pop_time: u64) !void {
+            try self.elems.append(.{ .item = item, .pop_time = pop_time });
+            std.sort.insertion(Elem, self.elems.slice(), {}, lessThan);
+        }
+
+        fn pop(self: *@This()) ?Item {
+            if (self.elems.len == 0) return null;
+            const last = self.elems.get(self.elems.len - 1);
+            if (last.pop_time > self.tick.*) {
+                return null;
+            }
+            return self.elems.pop().?.item;
+        }
+
+        fn constSlice(self: *@This()) []const Elem {
+            return self.list.constSlice();
+        }
+    };
+}
+
+pub const Req = struct {
+    pub const T = union(enum) {
+        accept: struct { usr_data: u64, fd: FD.ServerSock.T },
+        recv: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []u8 },
+        send: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []const u8 },
     };
 
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.exec_time, b.exec_time);
+    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
+        return .{
+            .accept = .{ .usr_data = usr_data, .fd = fd },
+        };
+    }
+
+    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
+        return .{
+            .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
+        };
+    }
+
+    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
+        return .{
+            .send = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
+        };
     }
 };
 
-const Completion = struct {
-    const Queue = std.PriorityQueue(Item, void, compare);
-
-    const Item = struct {
-        req: Req,
-        /// Time when it can be popped off the completion queue
-        ready_time: u64,
-        result: FD,
-    };
-
-    fn compare(_: void, a: Item, b: Item) math.Order {
-        return math.order(a.ready_time, b.ready_time);
-    }
-};
-
-//const heap = std.heap;
-//const math = std.math;
-//const mem = std.mem;
-//const posix = std.posix;
-//const rand = std.Random;
-//const testing = std.testing;
+//const DebugLog = struct {
+//    file: std.fs.File,
+//    allocator: std.mem.Allocator,
 //
-//const ArrayList = std.ArrayListUnmanaged;
-//const PriorityQueue = std.PriorityQueue;
+//    pub fn init(allocator: std.mem.Allocator, seed: u64) !@This() {
+//        const log_dir = "log";
+//        try std.fs.cwd().makePath(log_dir);
+//        const filename = try std.fmt.allocPrint(
+//            allocator,
+//            "{s}/log_{d}_{d}.txt",
+//            .{
+//                log_dir,
+//                seed,
+//                std.time.milliTimestamp(),
+//            },
+//        );
+//        defer allocator.free(filename);
+//        const file = try std.fs.cwd().createFile(filename, .{});
+//        return .{ .file = file, .allocator = allocator };
+//    }
 //
-//const lib = @import("./lib.zig");
+//    pub fn deinit(self: *@This()) void {
+//        self.file.close();
+//    }
 //
+//    pub fn write(
+//        self: *@This(),
+//        comptime fmt: []const u8,
+//        args: anytype,
+//    ) !void {
+//        try self.file.writer().print(fmt, args);
+//    }
+//};
+
 //const c = @cImport({
 //    @cInclude("tui.h");
 //});

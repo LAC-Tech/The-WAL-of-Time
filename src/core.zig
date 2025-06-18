@@ -2,125 +2,127 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
-const aio = @import("./async_io.zig");
-const limits = @import("limits.zig");
 const util = @import("./util.zig");
-
-const UsrData = aio.UsrData;
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
-pub fn InMem(
+pub fn StateMachine(
     comptime FD: type,
-    comptime fd_eql: fn (FD, FD) bool,
+    comptime AIOReq: type,
+    comptime limits: struct {
+        max_clients: comptime_int,
+        write_buf_size: comptime_int,
+    },
 ) type {
-    const ClientFDs = util.SlotMap(limits.max_clients, FD, fd_eql);
-    const aio_msg = aio.msg(FD);
-    const aio_req = aio_msg.req;
+    const Clients = util.SlotMap(
+        FD.ClientSock.T,
+        FD.ClientSock.eql,
+        limits.max_clients,
+        .{ .duplicates = false },
+    );
+    const AioReqs = std.BoundedArray(AIOReq.T, 2);
 
     return struct {
-        client_fds: ClientFDs,
+        clients: Clients,
         recv_buf: []u8,
+        aio_req_buf: AioReqs,
 
         pub fn init(allocator: mem.Allocator) !@This() {
-            // TODO: one of these per client?  they can be overwritten
-            const recv_buf = try allocator.alloc(u8, limits.write_buf_size);
-
             return .{
-                .client_fds = try ClientFDs.init(allocator),
-                .recv_buf = recv_buf,
+                .clients = try Clients.init(allocator),
+                // TODO: one of these per client?  they can be overwritten
+                .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
+                .aio_req_buf = try AioReqs.init(0),
             };
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.client_fds.deinit(allocator);
+            self.clients.deinit(allocator);
+            allocator.free(self.recv_buf);
         }
 
-        pub fn initial_aio_reqs() [limits.max_clients]u64 {
-            const usr_data: UsrData = .{ .tag = .client_connected };
-            return [_]u64{@bitCast(usr_data)} ** limits.max_clients;
+        pub fn initial_aio_req(
+            self: *@This(),
+            fd: FD.ServerSock.T,
+        ) ![]const AIOReq.T {
+            const usr_data: UsrData = .{ .op = .accept };
+            const req = AIOReq.accept_multishot(@bitCast(usr_data), fd);
+            try self.aio_req_buf.append(req);
+            return self.aio_req_buf.constSlice();
         }
 
-        fn prepare_client(self: *@This(), client_slot: u8) aio_req.Recv {
+        fn prepare_client(self: *@This(), id: u8) AIOReq.T {
             // so we can receive a message
-            const client_fd = self.client_fds.get(client_slot) orelse {
-                @panic("expect to have a client fd here");
+            const fd_client = self.clients.get(id) orelse {
+                @panic("invalid client id");
             };
 
-            return .{
-                .usr_data = UsrData.client_msg(client_slot),
-                .client_fd = client_fd,
-                .buf = self.recv_buf,
-            };
+            const usr_data: u64 = @bitCast(UsrData{
+                .op = .recv,
+                .payload = .{ .client_id = id },
+            });
+
+            return AIOReq.recv(usr_data, fd_client, self.recv_buf);
         }
 
-        pub fn res_with_ctx(self: *@This(), res: aio_msg.Res) !Res(FD) {
-            const usr_data: UsrData = @bitCast(res.usr_data);
+        pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
+            self.aio_req_buf.clear();
+            const res_usr_data: UsrData = @bitCast(res.usr_data);
 
-            switch (usr_data.tag) {
-                .client_connected => {
-                    const client_fd: FD = res.rc;
-                    const client_slot = try self.client_fds.add(client_fd);
+            switch (res_usr_data.op) {
+                .accept => {
+                    const fd: FD.ClientSock.T = @enumFromInt(res.rc);
+                    const id = try self.clients.add(fd);
 
-                    const send_req = aio_req.Send{
-                        .usr_data = UsrData.client_ready(
-                            client_slot,
-                        ),
-                        .client_fd = client_fd,
-                        .buf = "connection acknowledged\n",
-                    };
+                    const usr_data: u64 = @bitCast(UsrData{
+                        .op = .send,
+                        .payload = .{ .client_id = id },
+                    });
 
-                    return .{
-                        .client_connected = .{
-                            .reqs = .{
-                                .accept = UsrData.client_connected,
-                                .send = send_req,
-                            },
-                        },
-                    };
+                    const req = AIOReq.send(
+                        usr_data,
+                        fd,
+                        "connection acknowledged\n",
+                    );
+
+                    try self.aio_req_buf.append(req);
                 },
-                .client_ready => {
-                    const client_id = usr_data.payload.client_id;
+                .send => {
+                    const id = res_usr_data.payload.client_id;
+                    const req = self.prepare_client(id);
 
-                    const recv_req: aio_req.Recv =
-                        self.prepare_client(client_id);
-
-                    return .{
-                        .client_ready = .{
-                            .reqs = .{ .recv = recv_req },
-                        },
-                    };
+                    try self.aio_req_buf.append(req);
                 },
-                .client_msg => {
-                    const client_id = usr_data.payload.client_id;
+                .recv => {
+                    const client_id = res_usr_data.payload.client_id;
                     const buf_len: usize = @intCast(res.rc);
+                    const msg = self.recv_buf[0..buf_len];
+                    std.debug.print("Msg received: {s}", .{msg});
 
-                    const recv_req: aio_req.Recv =
-                        self.prepare_client(client_id);
+                    const req = self.prepare_client(client_id);
 
-                    return .{
-                        .client_msg = .{
-                            .msg = self.recv_buf[0..buf_len],
-                            .reqs = .{ .recv = recv_req },
-                        },
-                    };
+                    try self.aio_req_buf.append(req);
                 },
             }
+
+            return self.aio_req_buf.constSlice();
         }
     };
 }
 
-pub fn Res(comptime FD: type) type {
-    const aio_req = aio.msg(FD).req;
+/// Data passed to async io systems
+/// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
+const UsrData = packed struct(u64) {
+    op: enum(u8) { accept, send, recv },
+    /// Zig tagged unions can't be bitcast.
+    /// So we hack it together like C
+    payload: packed union { client_id: u8 } = undefined,
+    _padding: u48 = 0,
+};
 
-    return union(enum) {
-        client_connected: struct {
-            reqs: struct { accept: aio_req.Accept, send: aio_req.Send },
-        },
-        client_ready: struct { reqs: struct { recv: aio_req.Recv } },
-        client_msg: struct {
-            msg: []const u8,
-            reqs: struct { recv: aio_req.Recv },
-        },
-    };
+comptime {
+    // IO Uring user_data
+    debug.assert(@sizeOf(u64) == @sizeOf(UsrData));
+    // Kqueue udata
+    debug.assert(@sizeOf(usize) == @sizeOf(UsrData));
 }

@@ -6,8 +6,6 @@ const debug = std.debug;
 const mem = std.mem;
 
 const core = @import("./core.zig");
-const event_loop = @import("./event_loop.zig");
-const sim = @import("./sim.zig");
 const linux = @import("./linux.zig");
 
 pub fn main() !void {
@@ -20,19 +18,22 @@ pub fn main() !void {
             var aio = try linux.AsyncIO.init();
             defer aio.deinit();
 
-            const InMem = core.InMem(linux.FD, linux.fd_eql);
-            var in_mem = try InMem.init(allocator);
-            defer in_mem.deinit(allocator);
+            var sm = try core.StateMachine(
+                linux.FD,
+                linux.Req,
+                .{ .max_clients = 2, .write_buf_size = 64 },
+            ).init(allocator);
+            defer sm.deinit(allocator);
 
-            try event_loop.initial_reqs(InMem, &aio);
+            const initiaReqs = try sm.initial_aio_req(aio.server_fd);
+            debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
             debug.print("The WAL weaves as the WAL wills\n", .{});
 
             while (true) {
-                const aio_res = try aio.wait_for_res();
-                const res = try in_mem.res_with_ctx(aio_res);
-
-                try event_loop.step(linux.FD, res, &aio);
+                const res = try aio.await_res();
+                const reqs = try sm.transition(res);
+                debug.assert(try aio.send(reqs) == reqs.len);
             }
         },
         else => @panic("No async io for this OS"),

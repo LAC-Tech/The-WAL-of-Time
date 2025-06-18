@@ -1,26 +1,16 @@
 const std = @import("std");
-//const posix = @import("./posix.zig");
 const linux = std.os.linux;
+const mem = std.mem;
 const net = std.net;
 const posix = std.posix;
 
-const aio = @import("./async_io.zig");
-
-pub const FD = posix.fd_t;
-
-pub fn fd_eql(a: FD, b: FD) bool {
-    return a == b;
-}
-
-const aio_msg = aio.msg(FD);
-const aio_req = aio_msg.req;
-const AioRes = aio_msg.Res;
+pub const FD = @import("./fd.zig").module(posix.socket_t);
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
     ring: linux.IoUring,
-    socket_fd: posix.socket_t,
+    server_fd: FD.ServerSock.T,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
@@ -49,40 +39,25 @@ pub const AsyncIO = struct {
         const backlog = 128;
         try posix.listen(fd, backlog);
 
-        return .{
-            .ring = ring,
-            .socket_fd = fd,
-        };
+        return .{ .ring = ring, .server_fd = @enumFromInt(fd) };
     }
 
     pub fn deinit(self: *@This()) void {
         self.ring.deinit();
-        posix.close(self.socket_fd);
-    }
-
-    pub fn accept(self: *@This(), req: aio_req.Accept) !*linux.io_uring_sqe {
-        return self.ring.accept(req, self.socket_fd, null, null, 0);
-    }
-
-    pub fn recv(self: *@This(), req: aio_req.Recv) !*linux.io_uring_sqe {
-        return self.ring.recv(
-            req.usr_data,
-            req.client_fd,
-            .{ .buffer = req.buf },
-            0,
-        );
-    }
-
-    pub fn send(self: *@This(), req: aio_req.Send) !*linux.io_uring_sqe {
-        return self.ring.send(req.usr_data, req.client_fd, req.buf, 0);
+        posix.close(@intFromEnum(self.server_fd));
     }
 
     /// Number of entries submitted
-    pub fn flush(self: *@This()) !u32 {
+    pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
+        for (reqs) |sqe| {
+            const vacant_sqe = try self.ring.get_sqe();
+            vacant_sqe.* = sqe;
+        }
+
         return self.ring.submit();
     }
 
-    pub fn wait_for_res(self: *@This()) !AioRes {
+    pub fn await_res(self: *@This()) !FD.IORes {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -91,5 +66,30 @@ pub const AsyncIO = struct {
         }
 
         return .{ .rc = cqe.res, .usr_data = cqe.user_data };
+    }
+};
+
+pub const Req = struct {
+    pub const T = linux.io_uring_sqe;
+
+    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
+        var result = mem.zeroes(T);
+        result.prep_multishot_accept(@intFromEnum(fd), null, null, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
+        var result = mem.zeroes(T);
+        result.prep_recv(@intFromEnum(fd), buf, 0);
+        result.user_data = usr_data;
+        return result;
+    }
+
+    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
+        var result = mem.zeroes(T);
+        result.prep_send(@intFromEnum(fd), buf, 0);
+        result.user_data = usr_data;
+        return result;
     }
 };

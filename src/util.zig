@@ -108,6 +108,9 @@ test "SlotMap" {
     try std.testing.expectEqual(42, sm.remove(slot1).?);
     try std.testing.expectEqual(null, sm.get(slot1));
 
+    try std.testing.expectEqual(99, sm.remove(slot2).?);
+    try std.testing.expectEqual(null, sm.get(slot2));
+
     var i: u8 = 0;
     while (i < 8) : (i += 1) {
         _ = try sm.add(i);

@@ -44,7 +44,7 @@ pub fn SlotMap(
             if (!opts.duplicates) {
                 var slot: Slot = 0;
                 while (slot < max_slots) : (slot += 1) {
-                    if (self.is_occupied(slot)) continue;
+                    if (self.is_clear(slot)) continue;
                     if (eql(self.vals[slot], val)) return error.Duplicate;
                 }
             }
@@ -57,29 +57,60 @@ pub fn SlotMap(
         }
 
         pub fn get(self: @This(), slot: Slot) ?T {
-            return if (self.is_occupied(slot)) self.vals[slot] else null;
+            return if (self.is_set(slot)) self.vals[slot] else null;
         }
 
         fn remove(self: *@This(), slot: Slot) ?T {
-            if (((self.used_slots >> slot) & 1) == 0) {
-                return null;
-            }
+            if (self.is_clear(slot)) return null;
             self.clear(slot);
             const value = self.vals[slot];
             self.vals[slot] = undefined;
             return value;
         }
 
-        fn is_occupied(self: @This(), slot: Slot) bool {
+        fn is_set(self: @This(), slot: Slot) bool {
             return ((self.used_slots >> @intCast(slot)) & 1) == 1;
         }
 
+        fn is_clear(self: @This(), slot: Slot) bool {
+            return ((self.used_slots >> @intCast(slot)) & 1) == 0;
+        }
+
         fn clear(self: *@This(), slot: Slot) void {
-            self.used_slots |= @as(UInt, 0) << @intCast(slot);
+            self.used_slots &= ~(@as(UInt, 1) << @intCast(slot));
         }
 
         fn set(self: *@This(), slot: Slot) void {
             self.used_slots |= @as(UInt, 1) << @intCast(slot);
         }
     };
+}
+
+fn u32_eql(a: u32, b: u32) bool {
+    return std.meta.eql(a, b);
+}
+
+test "SlotMap" {
+    const allocator = std.testing.allocator;
+    const SM = SlotMap(u32, u32_eql, 8, .{ .duplicates = false });
+    var sm = try SM.init(allocator);
+    defer sm.deinit(allocator);
+
+    const slot1 = try sm.add(42);
+    try std.testing.expectEqual(0, slot1);
+    try std.testing.expectEqual(42, sm.get(slot1).?);
+    try std.testing.expectError(error.Duplicate, sm.add(42));
+
+    const slot2 = try sm.add(99);
+    try std.testing.expectEqual(1, slot2);
+    try std.testing.expectEqual(99, sm.get(slot2).?);
+
+    try std.testing.expectEqual(42, sm.remove(slot1).?);
+    try std.testing.expectEqual(null, sm.get(slot1));
+
+    var i: u8 = 0;
+    while (i < 8) : (i += 1) {
+        _ = try sm.add(i);
+    }
+    try std.testing.expectError(error.Overflow, sm.add(100));
 }

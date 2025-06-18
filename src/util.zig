@@ -44,34 +44,42 @@ pub fn SlotMap(
             if (!opts.duplicates) {
                 var slot: Slot = 0;
                 while (slot < max_slots) : (slot += 1) {
-                    if (((self.used_slots >> slot) & 1) == 0) continue;
+                    if (self.is_occupied(slot)) continue;
                     if (eql(self.vals[slot], val)) return error.Duplicate;
                 }
             }
 
             const free_slot = @ctz(~self.used_slots);
             if (free_slot >= max_slots) return error.Overflow;
-            self.used_slots |= 1 << free_slot;
+            self.set(free_slot);
             self.vals[free_slot] = val;
             return @intCast(free_slot);
         }
 
         pub fn get(self: @This(), slot: Slot) ?T {
-            if (((self.used_slots >> slot) & 1) == 0) {
-                return null;
-            }
-
-            return self.vals[slot];
+            return if (self.is_occupied(slot)) self.vals[slot] else null;
         }
 
         fn remove(self: *@This(), slot: Slot) ?T {
             if (((self.used_slots >> slot) & 1) == 0) {
                 return null;
             }
-            self.used_slots &= ~(1 << slot);
+            self.clear(slot);
             const value = self.vals[slot];
             self.vals[slot] = undefined;
             return value;
+        }
+
+        fn is_occupied(self: @This(), slot: Slot) bool {
+            return ((self.used_slots >> @intCast(slot)) & 1) == 1;
+        }
+
+        fn clear(self: *@This(), slot: Slot) void {
+            self.used_slots |= @as(UInt, 0) << @intCast(slot);
+        }
+
+        fn set(self: *@This(), slot: Slot) void {
+            self.used_slots |= @as(UInt, 1) << @intCast(slot);
         }
     };
 }

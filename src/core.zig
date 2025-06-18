@@ -110,14 +110,10 @@ pub fn StateMachine(
     };
 }
 
-const Limits = struct { max_clients: usize, write_buf_size: usize };
-
-const Op = enum(u8) { accept, send, recv };
-
 /// Data passed to async io systems
 /// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
 const UsrData = packed struct(u64) {
-    op: Op,
+    op: enum(u8) { accept, send, recv },
     /// Zig tagged unions can't be bitcast.
     /// So we hack it together like C
     payload: packed union { client_id: u8 } = undefined,

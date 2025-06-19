@@ -30,64 +30,103 @@ fn RandRange(comptime T: type) type {
     };
 }
 
-pub const AsyncIO = struct {
+pub fn AsyncIO(comptime settings: struct { max_clients: comptime_int }) type {
     const Submitted = TickQueue(Req.T, 8);
     const Completed = TickQueue(FD.IORes, 8);
+    const ClientFDs = std.bit_set.StaticBitSet(settings.max_clients);
 
-    sq: Submitted,
-    cq: Completed,
-    socket_fd: FD.ServerSock.T,
-    rng: *Rng,
-    ticks: *const u64,
-
-    pub fn init(
+    return struct {
+        sq: Submitted,
+        cq: Completed,
+        socket_fd: FD.ServerSock.T,
         rng: *Rng,
         ticks: *const u64,
-    ) !@This() {
-        return .{
-            .sq = try Submitted.init(ticks),
-            .cq = try Completed.init(ticks),
-            .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
-            .rng = rng,
-            .ticks = ticks,
-        };
-    }
+        client_fds: ClientFDs,
 
-    /// Number of entries submitted
-    pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
-        for (reqs) |r| {
-            try self.sq.insert(
-                r,
-                self.ticks.* + config.completion_time.gen(self.rng),
-            );
+        pub fn init(
+            allocator: mem.Allocator,
+            rng: *Rng,
+            ticks: *const u64,
+        ) !@This() {
+            // TODO maybe we'll need one eventually? idk
+            _ = allocator;
+            return .{
+                .sq = try Submitted.init(),
+                .cq = try Completed.init(),
+                .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
+                .rng = rng,
+                .ticks = ticks,
+                .client_fds = ClientFDs.initEmpty(),
+            };
         }
 
-        return @intCast(reqs.len);
-    }
+        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            _ = self;
+            _ = allocator;
+            @panic("we need this now");
+        }
 
-    pub fn tick(self: *@This()) !?FD.IORes {
-        if (self.sq.pop()) |req| {
-            switch (req) {
-                .accept => |a| {
-                    _ = a;
-                    @panic("TODO: exec accept req");
-                },
-                .recv => |r| {
-                    _ = r;
-                    @panic("TODO: exec recv req");
-                },
-                .send => |s| {
-                    _ = s;
-                    @panic("TODO: exec send send");
-                },
+        /// Number of entries submitted
+        pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
+            for (reqs) |r| {
+                try self.sq.insert(
+                    r,
+                    self.ticks.* + config.completion_time.gen(self.rng),
+                );
             }
 
-            // TODO: put item on completed
+            return @intCast(reqs.len);
         }
 
-        return self.cq.pop();
-    }
-};
+        pub fn tick(self: *@This()) !?FD.IORes {
+            if (self.sq.pop(self.ticks)) |req| {
+                const res = try self.exec(req);
+
+                try self.cq.insert(
+                    res,
+                    self.ticks.* + config.user_time.gen(self.rng),
+                );
+            }
+
+            return self.cq.pop(self.ticks);
+        }
+
+        // TODO this may beling in a separate struct that wraps client FDs
+        fn exec(self: *@This(), req: Req.T) !FD.IORes {
+            switch (req) {
+                // Ignored the socket arg; not relevant in sim?
+                .accept => |a| {
+                    const fd = self.rng.random().int(FD.Int);
+                    self.client_fds.set(fd);
+                    return .{ .rc = fd, .usr_data = a.usr_data };
+                },
+                .recv => |r| {
+                    const fd = @intFromEnum(r.fd);
+                    if (!self.client_fds.isSet(fd)) {
+                        @panic("recv: handle a non existent client ID");
+                    }
+
+                    // TODO: random lengths?
+                    self.rng.random().bytes(r.buf);
+
+                    return .{
+                        .rc = r.buf.len,
+                        .usr_data = r.usr_data,
+                    };
+                },
+                .send => |s| {
+                    const fd = @intFromEnum(s.fd);
+                    if (!self.client_fds.isSet(fd)) {
+                        @panic("send: handle a non existent client ID");
+                    }
+                    std.log.debug("{}", .{std.fmt.fmtSliceHexLower(s.buf)});
+
+                    return .{ .rc = s.buf.len, .usr_data = s.usr_data };
+                },
+            }
+        }
+    };
+}
 
 /// Small, sorted arrays that pop elements when it's time
 fn TickQueue(comptime Item: type, comptime capacity: usize) type {
@@ -101,10 +140,9 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
         const Elems = std.BoundedArray(Elem, capacity);
 
         elems: std.BoundedArray(Elem, capacity),
-        tick: *const u64,
 
-        fn init(tick: *const u64) !@This() {
-            return .{ .elems = try Elems.init(0), .tick = tick };
+        fn init() !@This() {
+            return .{ .elems = try Elems.init(0) };
         }
 
         fn insert(self: *@This(), item: Item, pop_time: u64) !void {
@@ -112,10 +150,10 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
             std.sort.insertion(Elem, self.elems.slice(), {}, lessThan);
         }
 
-        fn pop(self: *@This()) ?Item {
+        fn pop(self: *@This(), tick: *const u64) ?Item {
             if (self.elems.len == 0) return null;
             const last = self.elems.get(self.elems.len - 1);
-            if (last.pop_time > self.tick.*) {
+            if (last.pop_time > tick.*) {
                 return null;
             }
             return self.elems.pop().?.item;

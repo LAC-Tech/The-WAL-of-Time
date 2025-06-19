@@ -15,9 +15,7 @@ pub fn main() !void {
     var rng = std.Random.DefaultPrng.init(seed);
     var ticks: u64 = 0;
 
-    const AIO = sim.AsyncIO(.{ .max_clients = 2 });
-    var aio = try AIO.init(allocator, &rng, &ticks);
-    defer aio.deinit(allocator);
+    var aio = try sim.AsyncIO.init(&rng, &ticks);
 
     var sm = try core.StateMachine(
         sim.FD,

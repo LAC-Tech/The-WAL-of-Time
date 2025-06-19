@@ -97,7 +97,7 @@ pub fn StateMachine(
                     const client_id = res_usr_data.payload.client_id;
                     const buf_len: usize = @intCast(res.rc);
                     const msg = self.recv_buf[0..buf_len];
-                    std.debug.print("Msg received: {s}", .{msg});
+                    std.debug.print("Msg received: {s}\n", .{msg});
 
                     const req = self.prepare_client(client_id);
 

@@ -12,8 +12,8 @@ const util = @import("./util.zig");
 const Rng = std.Random.DefaultPrng;
 
 const config = struct {
-    const completion_time = RandRange(u64).init(1, 10);
-    const user_time = RandRange(u64).init(1, 5);
+    const exec_delay = RandRange(u64).init(1, 10);
+    const user_delay = RandRange(u64).init(1, 5);
 };
 
 fn RandRange(comptime T: type) type {
@@ -65,7 +65,7 @@ pub const AsyncIO = struct {
         for (reqs) |r| {
             try self.sq.insert(
                 r,
-                self.ticks.* + config.completion_time.gen(self.rng),
+                self.ticks.* + config.exec_delay.gen(self.rng),
             );
         }
 
@@ -78,7 +78,7 @@ pub const AsyncIO = struct {
 
             try self.cq.insert(
                 res,
-                self.ticks.* + config.user_time.gen(self.rng),
+                self.ticks.* + config.user_delay.gen(self.rng),
             );
         }
 

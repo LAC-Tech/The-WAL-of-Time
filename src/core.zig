@@ -51,20 +51,6 @@ pub fn StateMachine(
             return self.aio_req_buf.constSlice();
         }
 
-        fn prepare_client(self: *@This(), id: u8) AIOReq.T {
-            // so we can receive a message
-            const fd_client = self.clients.get(id) orelse {
-                @panic("invalid client id");
-            };
-
-            const usr_data: u64 = @bitCast(UsrData{
-                .op = .recv,
-                .payload = .{ .client_id = id },
-            });
-
-            return AIOReq.recv(usr_data, fd_client, self.recv_buf);
-        }
-
         pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
             self.aio_req_buf.clear();
             const res_usr_data: UsrData = @bitCast(res.usr_data);
@@ -72,36 +58,34 @@ pub fn StateMachine(
             switch (res_usr_data.op) {
                 .accept => {
                     const fd: FD.ClientSock.T = @enumFromInt(res.rc);
-                    const id = try self.clients.add(fd);
+                    const client_id = try self.clients.add(fd);
+                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
 
-                    const usr_data: u64 = @bitCast(UsrData{
-                        .op = .send,
-                        .payload = .{ .client_id = id },
-                    });
-
-                    const req = AIOReq.send(
-                        usr_data,
-                        fd,
-                        "connection acknowledged\n",
+                    try self.aio_req_buf.append(
+                        AIOReq.send(usr_data, fd, "connection acknowledged\n"),
                     );
-
-                    try self.aio_req_buf.append(req);
                 },
                 .send => {
-                    const id = res_usr_data.payload.client_id;
-                    const req = self.prepare_client(id);
+                    const client_id = res_usr_data.payload.client_id;
+                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
+                    const fd_client = self.clients.get(client_id).?;
 
-                    try self.aio_req_buf.append(req);
+                    try self.aio_req_buf.append(
+                        AIOReq.recv(usr_data, fd_client, self.recv_buf),
+                    );
                 },
                 .recv => {
-                    const client_id = res_usr_data.payload.client_id;
                     const buf_len: usize = @intCast(res.rc);
                     const msg = self.recv_buf[0..buf_len];
                     std.debug.print("Msg received: {s}\n", .{msg});
 
-                    const req = self.prepare_client(client_id);
+                    const client_id = res_usr_data.payload.client_id;
+                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
+                    const fd_client = self.clients.get(client_id).?;
 
-                    try self.aio_req_buf.append(req);
+                    try self.aio_req_buf.append(
+                        AIOReq.recv(usr_data, fd_client, self.recv_buf),
+                    );
                 },
             }
 
@@ -118,6 +102,14 @@ const UsrData = packed struct(u64) {
     /// So we hack it together like C
     payload: packed union { client_id: u8 } = undefined,
     _padding: u48 = 0,
+
+    fn recv(client_id: u8) @This() {
+        return .{ .op = .recv, .payload = .{ .client_id = client_id } };
+    }
+
+    fn send(client_id: u8) @This() {
+        return .{ .op = .send, .payload = .{ .client_id = client_id } };
+    }
 };
 
 comptime {

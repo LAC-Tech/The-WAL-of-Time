@@ -53,25 +53,28 @@ pub fn StateMachine(
 
         pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
             self.aio_req_buf.clear();
-            const res_usr_data: UsrData = @bitCast(res.usr_data);
+            const res_ud: UsrData = @bitCast(res.usr_data);
 
-            switch (res_usr_data.op) {
+            switch (res_ud.op) {
                 .accept => {
                     const fd: FD.ClientSock.T = @enumFromInt(res.rc);
                     const client_id = try self.clients.add(fd);
-                    const usr_data: u64 = @bitCast(UsrData.send(client_id));
+                    const ud: u64 = @bitCast(
+                        UsrData{ .op = .send, .client_id = client_id },
+                    );
 
                     try self.aio_req_buf.append(
-                        AIOReq.send(usr_data, fd, "connection acknowledged\n"),
+                        AIOReq.send(ud, fd, "connection acknowledged\n"),
                     );
                 },
                 .send => {
-                    const client_id = res_usr_data.payload.client_id;
-                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
-                    const fd_client = self.clients.get(client_id).?;
+                    const ud: u64 = @bitCast(
+                        .{ .op = .recv, .client_id = res_ud.client_id },
+                    );
+                    const fd_client = self.clients.get(res_ud.client_id).?;
 
                     try self.aio_req_buf.append(
-                        AIOReq.recv(usr_data, fd_client, self.recv_buf),
+                        AIOReq.recv(ud, fd_client, self.recv_buf),
                     );
                 },
                 .recv => {
@@ -79,12 +82,13 @@ pub fn StateMachine(
                     const msg = self.recv_buf[0..buf_len];
                     debug.print("Msg received: {s}\n", .{msg});
 
-                    const client_id = res_usr_data.payload.client_id;
-                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
-                    const fd_client = self.clients.get(client_id).?;
+                    const ud: u64 = @bitCast(
+                        .{ .op = .recv, .client_id = res_ud.client_id },
+                    );
+                    const fd_client = self.clients.get(res_ud.client_id).?;
 
                     try self.aio_req_buf.append(
-                        AIOReq.recv(usr_data, fd_client, self.recv_buf),
+                        AIOReq.recv(ud, fd_client, self.recv_buf),
                     );
                 },
             }
@@ -96,20 +100,11 @@ pub fn StateMachine(
 
 /// Data passed to async io systems
 /// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
+/// Can't  be a tagged union; zig can't bitcast those
 const UsrData = packed struct(u64) {
     op: enum(u8) { accept, send, recv },
-    /// Zig tagged unions can't be bitcast.
-    /// So we hack it together like C
-    payload: packed union { client_id: u8 } = undefined,
+    client_id: u8 = undefined,
     _padding: u48 = 0,
-
-    fn recv(client_id: u8) @This() {
-        return .{ .op = .recv, .payload = .{ .client_id = client_id } };
-    }
-
-    fn send(client_id: u8) @This() {
-        return .{ .op = .send, .payload = .{ .client_id = client_id } };
-    }
 };
 
 comptime {

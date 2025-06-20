@@ -59,7 +59,7 @@ pub fn StateMachine(
                 .accept => {
                     const fd: FD.ClientSock.T = @enumFromInt(res.rc);
                     const client_id = try self.clients.add(fd);
-                    const usr_data: u64 = @bitCast(UsrData.recv(client_id));
+                    const usr_data: u64 = @bitCast(UsrData.send(client_id));
 
                     try self.aio_req_buf.append(
                         AIOReq.send(usr_data, fd, "connection acknowledged\n"),
@@ -77,7 +77,7 @@ pub fn StateMachine(
                 .recv => {
                     const buf_len: usize = @intCast(res.rc);
                     const msg = self.recv_buf[0..buf_len];
-                    std.debug.print("Msg received: {s}\n", .{msg});
+                    debug.print("Msg received: {s}\n", .{msg});
 
                     const client_id = res_usr_data.payload.client_id;
                     const usr_data: u64 = @bitCast(UsrData.recv(client_id));

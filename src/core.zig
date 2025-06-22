@@ -25,14 +25,14 @@ pub fn StateMachine(
     return struct {
         clients: Clients,
         recv_buf: []u8,
-        aio_req_buf: AioReqs,
+        io_req_buf: AioReqs,
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
                 .clients = try Clients.init(allocator),
                 // TODO: one of these per client?  they can be overwritten
                 .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
-                .aio_req_buf = try AioReqs.init(0),
+                .io_req_buf = try AioReqs.init(0),
             };
         }
 
@@ -47,53 +47,47 @@ pub fn StateMachine(
         ) ![]const AIOReq.T {
             const usr_data: UsrData = .{ .op = .accept };
             const req = AIOReq.accept_multishot(@bitCast(usr_data), fd);
-            try self.aio_req_buf.append(req);
-            return self.aio_req_buf.constSlice();
+            try self.io_req_buf.append(req);
+            return self.io_req_buf.constSlice();
         }
 
         pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
-            self.aio_req_buf.clear();
+            self.io_req_buf.clear();
             const res_ud: UsrData = @bitCast(res.usr_data);
 
             switch (res_ud.op) {
                 .accept => {
                     const fd: FD.ClientSock.T = @enumFromInt(res.rc);
-                    const client_id = try self.clients.add(fd);
-                    const ud: u64 = @bitCast(
-                        UsrData{ .op = .send, .client_id = client_id },
-                    );
+                    const id = try self.clients.add(fd);
+                    const ud = UsrData{ .op = .send, .client_id = id };
+                    const msg = "connection acknowledged\n";
+                    const req = AIOReq.send(@bitCast(ud), fd, msg);
 
-                    try self.aio_req_buf.append(
-                        AIOReq.send(ud, fd, "connection acknowledged\n"),
-                    );
+                    try self.io_req_buf.append(req);
                 },
                 .send => {
-                    const ud: u64 = @bitCast(
-                        .{ .op = .recv, .client_id = res_ud.client_id },
-                    );
-                    const fd_client = self.clients.get(res_ud.client_id).?;
+                    const id = res_ud.client_id;
+                    const ud = UsrData{ .op = .recv, .client_id = id };
+                    const fd = self.clients.get(id).?;
+                    const req = AIOReq.recv(@bitCast(ud), fd, self.recv_buf);
 
-                    try self.aio_req_buf.append(
-                        AIOReq.recv(ud, fd_client, self.recv_buf),
-                    );
+                    try self.io_req_buf.append(req);
                 },
                 .recv => {
                     const buf_len: usize = @intCast(res.rc);
                     const msg = self.recv_buf[0..buf_len];
                     debug.print("Msg received: {s}\n", .{msg});
 
-                    const ud: u64 = @bitCast(
-                        .{ .op = .recv, .client_id = res_ud.client_id },
-                    );
-                    const fd_client = self.clients.get(res_ud.client_id).?;
+                    const id = res_ud.client_id;
+                    const ud = UsrData{ .op = .recv, .client_id = id };
+                    const fd = self.clients.get(res_ud.client_id).?;
+                    const req = AIOReq.recv(@bitCast(ud), fd, self.recv_buf);
 
-                    try self.aio_req_buf.append(
-                        AIOReq.recv(ud, fd_client, self.recv_buf),
-                    );
+                    try self.io_req_buf.append(req);
                 },
             }
 
-            return self.aio_req_buf.constSlice();
+            return self.io_req_buf.constSlice();
         }
     };
 }

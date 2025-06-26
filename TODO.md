@@ -1,3 +1,1 @@
-- InMem should not take fd_eql as a comptime argument, provide that in constructor
-- replace event loop run with a single step. same deps
-- real event loop and testing event loop are different.
+- plug in some kind of thing that sends messages, ie "recv", rather than hardcoding it in the Sim. That way, we can test the functionality of the actual code (ie, that it crashes when more than max clients tries to connect)

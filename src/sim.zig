@@ -12,23 +12,15 @@ const util = @import("./util.zig");
 const Rng = std.Random.DefaultPrng;
 
 const config = struct {
-    const exec_delay = RandRange(u64).init(1, 10);
-    const user_delay = RandRange(u64).init(1, 5);
+    const delay = struct {
+        const exec = .{ 1, 20 };
+        const usr = .{ 1, 5 };
+    };
 };
 
-fn RandRange(comptime T: type) type {
-    return struct {
-        at_least: T,
-        at_most: T,
-
-        fn init(at_least: T, at_most: T) @This() {
-            return .{ .at_least = at_least, .at_most = at_most };
-        }
-
-        fn gen(self: @This(), rng: anytype) T {
-            return rng.random().intRangeAtMost(T, self.at_least, self.at_most);
-        }
-    };
+fn rand_range(rng: anytype, range: struct { u64, u64 }) u64 {
+    const at_least, const at_most = range;
+    return rng.random().intRangeAtMost(u64, at_least, at_most);
 }
 
 pub const AsyncIO = struct {
@@ -63,10 +55,8 @@ pub const AsyncIO = struct {
     /// Number of entries submitted
     pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
         for (reqs) |r| {
-            try self.sq.insert(
-                r,
-                self.ticks.* + config.exec_delay.gen(self.rng),
-            );
+            const t = self.ticks.* + rand_range(self.rng, config.delay.exec);
+            try self.sq.insert(r, t);
         }
 
         return @intCast(reqs.len);
@@ -75,11 +65,8 @@ pub const AsyncIO = struct {
     pub fn tick(self: *@This()) !?FD.IORes {
         if (self.sq.pop(self.ticks)) |req| {
             const res = try self.exec(req);
-
-            try self.cq.insert(
-                res,
-                self.ticks.* + config.user_delay.gen(self.rng),
-            );
+            const t = self.ticks.* + rand_range(self.rng, config.delay.usr);
+            try self.cq.insert(res, t);
         }
 
         return self.cq.pop(self.ticks);
@@ -91,8 +78,6 @@ pub const AsyncIO = struct {
             // Ignored the socket arg; not relevant in sim?
             .accept => |a| {
                 const fd = self.rng.random().int(FD.Int);
-                debug.print("client fd = {}\n", .{fd});
-                debug.print("max clients = {}\n", .{max_clients});
                 self.client_fds.set(fd);
                 return .{ .rc = fd, .usr_data = a.usr_data };
             },

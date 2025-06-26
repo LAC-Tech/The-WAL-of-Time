@@ -24,17 +24,13 @@ fn rand_range(rng: anytype, range: struct { u64, u64 }) u64 {
 }
 
 pub const AsyncIO = struct {
-    const Submitted = TickQueue(Req.T, 8);
-    const InKernel = TickQueue(Req.T, 8);
-    const Completed = TickQueue(FD.IORes, 8);
-
     // Makes things easier, but a bit artifical
     const max_clients = std.math.maxInt(FD.Int);
     const ClientFDs = std.bit_set.StaticBitSet(max_clients);
 
-    sq: Submitted,
-    ik: InKernel,
-    cq: Completed,
+    processing: TickQueue(Req.T, 8),
+    /// Intermediate state; req has been executed, but not seen by user
+    completed: TickQueue(FD.IORes, 8),
     socket_fd: FD.ServerSock.T,
     rng: *Rng,
     ticks: *const u64,
@@ -45,9 +41,8 @@ pub const AsyncIO = struct {
         ticks: *const u64,
     ) !@This() {
         return .{
-            .sq = try Submitted.init(),
-            .ik = try InKernel.init(),
-            .cq = try Completed.init(),
+            .processing = try TickQueue(Req.T, 8).init(),
+            .completed = try TickQueue(FD.IORes, 8).init(),
             .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
             .rng = rng,
             .ticks = ticks,
@@ -59,20 +54,20 @@ pub const AsyncIO = struct {
     pub fn send(self: *@This(), reqs: []const Req.T) !u32 {
         for (reqs) |r| {
             const t = self.ticks.* + rand_range(self.rng, config.delay.exec);
-            try self.sq.insert(r, t);
+            try self.processing.insert(r, t);
         }
 
         return @intCast(reqs.len);
     }
 
     pub fn tick(self: *@This()) !?FD.IORes {
-        if (self.sq.pop(self.ticks)) |req| {
+        if (self.processing.pop(self.ticks)) |req| {
             const res = try self.exec(req);
             const t = self.ticks.* + rand_range(self.rng, config.delay.usr);
-            try self.cq.insert(res, t);
+            try self.completed.insert(res, t);
         }
 
-        return self.cq.pop(self.ticks);
+        return self.completed.pop(self.ticks);
     }
 
     // TODO this may beling in a separate struct that wraps client FDs

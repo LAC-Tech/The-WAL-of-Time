@@ -25,6 +25,7 @@ fn rand_range(rng: anytype, range: struct { u64, u64 }) u64 {
 
 pub const AsyncIO = struct {
     const Submitted = TickQueue(Req.T, 8);
+    const InKernel = TickQueue(Req.T, 8);
     const Completed = TickQueue(FD.IORes, 8);
 
     // Makes things easier, but a bit artifical
@@ -32,6 +33,7 @@ pub const AsyncIO = struct {
     const ClientFDs = std.bit_set.StaticBitSet(max_clients);
 
     sq: Submitted,
+    ik: InKernel,
     cq: Completed,
     socket_fd: FD.ServerSock.T,
     rng: *Rng,
@@ -44,6 +46,7 @@ pub const AsyncIO = struct {
     ) !@This() {
         return .{
             .sq = try Submitted.init(),
+            .ik = try InKernel.init(),
             .cq = try Completed.init(),
             .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
             .rng = rng,

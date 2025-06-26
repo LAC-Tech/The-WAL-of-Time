@@ -31,8 +31,14 @@ All files are append-only, and can never be modified; though they can be deleted
 
 ## Implementation
 
+### Single process that communicates over sockets
+
+While making this embedded and avoiding needlessly copying data does tempt me, I think having the database be a single process has important properties wrt isolation and deployment. Something of Joe Armstrong's "let it crash" philosophy has seeped through to me.
+
+### Language
+
 I have elected to implement this in Zig, for the following reasons:
 
 - ease of C interop; C is the lingua franca of computing, and low friction in creating C bindings is very important.
 - liburing style io_uring bindings built directly into the standard library
-- My personal preference for parameterisable modules, ala Ocaml, over traits.
+- My personal preference for parameterisable modules, ala Ocaml, over traits

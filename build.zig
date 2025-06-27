@@ -6,6 +6,12 @@ const executables = .{
         .description = "Run the server",
         .path = "src/server.zig",
     },
+
+    .{
+        .name = "client",
+        .description = "Run the server",
+        .path = "src/client.zig",
+    },
     .{
         .name = "dst",
         .description = "Run the deterministic simulation test",

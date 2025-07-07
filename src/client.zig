@@ -3,14 +3,18 @@ const c = @cImport({
     @cInclude("ncurses.h");
 });
 
-fn drawContent(win: *c.WINDOW, scroll_offset: i32, total_lines: i32, visible_lines: i32) void {
+const visible_lines: u32 = 14;
+const total_lines: u32 = 30;
+
+fn drawContent(win: *c.WINDOW, scroll_offset: u32) void {
     _ = c.wclear(win);
     _ = c.box(win, 0, 0);
 
-    var i: i32 = 0;
-    while (i < visible_lines and (scroll_offset + i) < total_lines) : (i += 1) {
-        _ = c.mvwprintw(win, i + 1, 1, "Line %d", scroll_offset + i);
+    for (0..visible_lines) |i| {
+        if (scroll_offset + i >= total_lines) break;
+        _ = c.mvwprintw(win, @intCast(i + 1), 1, "Line %d", scroll_offset + i);
     }
+
     _ = c.wrefresh(win);
 }
 
@@ -25,11 +29,9 @@ pub fn main() !void {
 
     const win = c.newwin(16, 80, 5, 0) orelse unreachable;
 
-    var scroll_offset: i32 = 0;
-    const total_lines: i32 = 30;
-    const visible_lines: i32 = 14;
+    var scroll_offset: u32 = 0;
 
-    drawContent(win, scroll_offset, total_lines, visible_lines);
+    drawContent(win, scroll_offset);
 
     while (true) {
         const key = c.getch();
@@ -38,13 +40,13 @@ pub fn main() !void {
             'j' => {
                 if (scroll_offset + visible_lines < total_lines) {
                     scroll_offset += 1;
-                    drawContent(win, scroll_offset, total_lines, visible_lines);
+                    drawContent(win, scroll_offset);
                 }
             },
             'k' => {
                 if (scroll_offset > 0) {
                     scroll_offset -= 1;
-                    drawContent(win, scroll_offset, total_lines, visible_lines);
+                    drawContent(win, scroll_offset);
                 }
             },
             else => {},

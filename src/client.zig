@@ -1,27 +1,53 @@
 const std = @import("std");
-const io = std.io;
-const os = std.os;
-const posix = std.posix;
+const c = @cImport({
+    @cInclude("ncurses.h");
+});
 
-const esc = "\x1B[";
-const set_scroll_region = esc ++ "5;20r";
-const move_cursor_top = esc ++ "5H";
-const reset_scroll_region = esc ++ "r";
-const clear_screen = esc ++ "2J";
+fn drawContent(win: *c.WINDOW, scroll_offset: i32, total_lines: i32, visible_lines: i32) void {
+    _ = c.wclear(win);
+    _ = c.box(win, 0, 0);
+
+    var i: i32 = 0;
+    while (i < visible_lines and (scroll_offset + i) < total_lines) : (i += 1) {
+        _ = c.mvwprintw(win, i + 1, 1, "Line %d", scroll_offset + i);
+    }
+    _ = c.wrefresh(win);
+}
 
 pub fn main() !void {
-    const stdout = io.getStdOut().writer();
-    const stdin = io.getStdIn().reader();
+    _ = c.initscr();
+    _ = c.refresh();
+    defer _ = c.endwin();
 
-    _ = try stdout.write(clear_screen);
-    _ = try stdout.write(set_scroll_region);
-    _ = try stdout.write(move_cursor_top);
+    _ = c.cbreak();
+    _ = c.noecho();
+    _ = c.keypad(c.stdscr, true);
 
-    var i: usize = 0;
-    while (i < 30) : (i += 1) {
-        _ = try stdout.print("Line {}\n", .{i});
+    const win = c.newwin(16, 80, 5, 0) orelse unreachable;
+
+    var scroll_offset: i32 = 0;
+    const total_lines: i32 = 30;
+    const visible_lines: i32 = 14;
+
+    drawContent(win, scroll_offset, total_lines, visible_lines);
+
+    while (true) {
+        const key = c.getch();
+        switch (key) {
+            'q' => break,
+            'j' => {
+                if (scroll_offset + visible_lines < total_lines) {
+                    scroll_offset += 1;
+                    drawContent(win, scroll_offset, total_lines, visible_lines);
+                }
+            },
+            'k' => {
+                if (scroll_offset > 0) {
+                    scroll_offset -= 1;
+                    drawContent(win, scroll_offset, total_lines, visible_lines);
+                }
+            },
+            else => {},
+        }
     }
-
-    _ = try stdout.write(reset_scroll_region);
-    _ = try stdin.readByte();
 }

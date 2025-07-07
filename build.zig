@@ -6,7 +6,6 @@ const executables = .{
         .description = "Run the server",
         .path = "src/server.zig",
     },
-
     .{
         .name = "client",
         .description = "Run the server",
@@ -16,11 +15,6 @@ const executables = .{
         .name = "dst",
         .description = "Run the deterministic simulation test",
         .path = "src/dst.zig",
-    },
-    .{
-        .name = "client",
-        .description = "Run the client",
-        .path = "src/client.zig",
     },
 };
 
@@ -51,6 +45,11 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        if (std.mem.eql(u8, "client", e.name)) {
+            exe.linkLibC();
+            exe.linkSystemLibrary("ncurses");
+        }
+        exe.linkLibC();
         b.installArtifact(exe);
 
         const run_cmd = b.addRunArtifact(exe);

@@ -2,4 +2,7 @@
   - main thread, received messages
   - worker thread that runs recv in a loop and prints in the right hand time
   - vt100 codes
+- write "op arg" type client vm thing. ct for create topic. ops are 1 bytes
+- implement create topic logic
+- Try multi-shot recv so I don't have to keep putting it back in the queue
 - plug in some kind of thing that sends messages, ie "recv", rather than hardcoding it in the Sim. That way, we can test the functionality of the actual code (ie, that it crashes when more than max clients tries to connect)

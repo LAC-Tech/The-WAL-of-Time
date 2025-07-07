@@ -117,3 +117,54 @@ test "SlotMap" {
     }
     try std.testing.expectError(error.Overflow, sm.add(100));
 }
+
+pub fn RingBuf(comptime T: type, comptime capacity: usize) type {
+    return struct {
+        items: [capacity]T = undefined,
+        write_idx: usize = 0,
+        read_idx: usize = 0,
+
+        pub const empty: @This() = .{};
+
+        pub fn isFull(self: @This()) bool {
+            return self.mask2(self.write_idx + self.items.len) == self.read_idx;
+        }
+
+        pub fn mask(self: @This(), index: usize) usize {
+            return index % self.items.len;
+        }
+
+        pub fn mask2(self: @This(), index: usize) usize {
+            return index % (2 * self.items.len);
+        }
+
+        pub fn push(self: *@This(), item: T) !void {
+            if (self.isFull()) return error.Overflow;
+            self.items[self.mask(self.write_idx)] = item;
+            self.write_idx = self.mask2(self.write_idx + 1);
+        }
+
+        pub fn pop(self: *@This()) ?T {
+            if (self.isEmpty()) return null;
+            const item = self.items[self.mask(self.read_idx)];
+            self.read_idx = self.mask2(self.read_idx + 1);
+            return item;
+        }
+
+        pub fn isEmpty(self: @This()) bool {
+            return self.write_idx == self.read_idx;
+        }
+    };
+}
+
+test "RingBuffer" {
+    var rb: RingBuf(i32, 3) = .empty;
+    try rb.push(1);
+    try rb.push(2);
+    try rb.push(3);
+    try std.testing.expectError(error.Overflow, rb.push(4));
+    try std.testing.expectEqual(1, rb.pop().?);
+    try std.testing.expectEqual(2, rb.pop().?);
+    try std.testing.expectEqual(3, rb.pop().?);
+    try std.testing.expectEqual(null, rb.pop());
+}

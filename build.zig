@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) void {
             exe.linkLibC();
             exe.linkSystemLibrary("ncurses");
         }
-        exe.linkLibC();
         b.installArtifact(exe);
 
         const run_cmd = b.addRunArtifact(exe);

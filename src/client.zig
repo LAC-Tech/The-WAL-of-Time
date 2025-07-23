@@ -1,27 +1,25 @@
 const std = @import("std");
 const io = std.io;
+const mem = std.mem;
 const os = std.os;
 const posix = std.posix;
 
-const esc = "\x1B[";
-const set_scroll_region = esc ++ "5;20r";
-const move_cursor_top = esc ++ "5H";
-const reset_scroll_region = esc ++ "r";
-const clear_screen = esc ++ "2J";
+const config = struct {
+    const max_input: usize = 256;
+};
 
 pub fn main() !void {
     const stdout = io.getStdOut().writer();
     const stdin = io.getStdIn().reader();
+    var input_buf: [config.max_input]u8 = .{0} ** config.max_input;
 
-    _ = try stdout.write(clear_screen);
-    _ = try stdout.write(set_scroll_region);
-    _ = try stdout.write(move_cursor_top);
+    while (true) {
+        try stdout.print("> ", .{});
+        const input = try stdin.readUntilDelimiter(&input_buf, '\n');
 
-    var i: usize = 0;
-    while (i < 30) : (i += 1) {
-        _ = try stdout.print("Line {}\n", .{i});
+        if (mem.eql(u8, input, "q")) {
+            break;
+        }
+        try stdout.print("{s}\n", .{input});
     }
-
-    _ = try stdout.write(reset_scroll_region);
-    _ = try stdin.readByte();
 }

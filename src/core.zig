@@ -116,10 +116,6 @@ pub fn Socket(comptime FD: type) type {
         pub fn client_eql(a: Client, b: Client) bool {
             return std.meta.eql(a, b);
         }
-
-        pub fn server_eql(a: Server, b: Server) bool {
-            return std.meta.eql(a, b);
-        }
     };
 }
 

@@ -6,7 +6,11 @@ const math = std.math;
 const mem = std.mem;
 const testing = std.testing;
 
-pub const FD = @import("./fd.zig").module(u8);
+pub const FD = u8;
+const core = @import("./core.zig");
+const Res = core.Response(FD);
+const Sock = core.Socket(FD);
+
 const util = @import("./util.zig");
 
 const Rng = std.Random.DefaultPrng;
@@ -25,13 +29,13 @@ fn rand_range(rng: anytype, range: struct { u64, u64 }) u64 {
 
 pub const AsyncIO = struct {
     // Makes things easier, but a bit artifical
-    const max_clients = std.math.maxInt(FD.Int);
+    const max_clients = math.maxInt(FD);
     const ClientFDs = std.bit_set.StaticBitSet(max_clients);
 
     processing: TickQueue(Req.T, 8),
     /// Intermediate state; req has been executed, but not seen by user
-    completed: TickQueue(FD.IORes, 8),
-    server_fd: FD.ServerSock.T,
+    completed: TickQueue(Res, 8),
+    server_fd: Sock.Server,
     rng: *Rng,
     ticks: *const u64,
     client_fds: ClientFDs,
@@ -42,8 +46,8 @@ pub const AsyncIO = struct {
     ) !@This() {
         return .{
             .processing = try TickQueue(Req.T, 8).init(),
-            .completed = try TickQueue(FD.IORes, 8).init(),
-            .server_fd = @enumFromInt(rng.random().int(FD.Int)),
+            .completed = try TickQueue(Res, 8).init(),
+            .server_fd = @enumFromInt(rng.random().int(FD)),
             .rng = rng,
             .ticks = ticks,
             .client_fds = ClientFDs.initEmpty(),
@@ -60,7 +64,7 @@ pub const AsyncIO = struct {
         return @intCast(reqs.len);
     }
 
-    pub fn tick(self: *@This()) !?FD.IORes {
+    pub fn tick(self: *@This()) !?Res {
         if (self.processing.pop(self.ticks)) |req| {
             const res = try self.exec(req);
             const t = self.ticks.* + rand_range(self.rng, config.delay.usr);
@@ -70,12 +74,12 @@ pub const AsyncIO = struct {
         return self.completed.pop(self.ticks);
     }
 
-    // TODO this may beling in a separate struct that wraps client FDs
-    fn exec(self: *@This(), req: Req.T) !FD.IORes {
+    // TODO this may belong in a separate struct that wraps client FDs
+    fn exec(self: *@This(), req: Req.T) !Res {
         switch (req) {
             // Ignored the socket arg; not relevant in sim?
             .accept => |a| {
-                const fd = self.rng.random().int(FD.Int);
+                const fd = self.rng.random().int(FD);
                 self.client_fds.set(fd);
                 return .{ .rc = fd, .usr_data = a.usr_data };
             },
@@ -147,24 +151,24 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
 
 pub const Req = struct {
     pub const T = union(enum) {
-        accept: struct { usr_data: u64, fd: FD.ServerSock.T },
-        recv: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []u8 },
-        send: struct { usr_data: u64, fd: FD.ClientSock.T, buf: []const u8 },
+        accept: struct { usr_data: u64, fd: Sock.Server },
+        recv: struct { usr_data: u64, fd: Sock.Client, buf: []u8 },
+        send: struct { usr_data: u64, fd: Sock.Client, buf: []const u8 },
     };
 
-    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
+    pub fn accept_multishot(usr_data: u64, fd: Sock.Server) T {
         return .{
             .accept = .{ .usr_data = usr_data, .fd = fd },
         };
     }
 
-    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
+    pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
         return .{
             .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
         };
     }
 
-    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
+    pub fn send(usr_data: u64, fd: Sock.Client, buf: []const u8) T {
         return .{
             .send = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
         };

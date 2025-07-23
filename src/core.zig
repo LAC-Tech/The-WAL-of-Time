@@ -18,9 +18,10 @@ pub fn StateMachine(
         write_buf_size: comptime_int,
     },
 ) type {
+    const Sock = Socket(FD);
     const Clients = util.SlotMap(
-        FD.ClientSock.T,
-        FD.ClientSock.eql,
+        Sock.Client,
+        Sock.client_eql,
         limits.max_clients,
         .{ .duplicates = false },
     );
@@ -34,7 +35,7 @@ pub fn StateMachine(
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
                 .clients = try Clients.init(allocator),
-                // TODO: one of these per client?  they can be overwritten
+                // TODO: one of these per client? they can be overwritten
                 .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
                 .io_req_buf = try AioReqs.init(0),
             };
@@ -51,7 +52,7 @@ pub fn StateMachine(
         // struct needs to become aware of where to send requests.
         pub fn initial_transition(
             self: *@This(),
-            server_fd: FD.ServerSock.T,
+            server_fd: Sock.Server,
         ) ![]const AIOReq.T {
             const usr_data: UsrData = .{ .op = .accept };
             const req = AIOReq.accept_multishot(@bitCast(usr_data), server_fd);
@@ -62,19 +63,21 @@ pub fn StateMachine(
         /// State Machine Transition Function
         pub fn transition(
             self: *@This(),
-            response: FD.IORes,
+            response: Response(FD),
         ) ![]const AIOReq.T {
             self.io_req_buf.clear();
             const res_ud: UsrData = @bitCast(response.usr_data);
 
             switch (res_ud.op) {
                 .accept => {
-                    const fd: FD.ClientSock.T = @enumFromInt(response.rc);
+                    const fd: Sock.Client = @enumFromInt(response.rc);
                     const id = try self.clients.add(fd);
                     const ud = UsrData{ .op = .send, .client_id = id };
-                    const msg = "connection acknowledged\n";
-                    const req = AIOReq.send(@bitCast(ud), fd, msg);
-
+                    const req = AIOReq.send(
+                        @bitCast(ud),
+                        fd,
+                        "connection acknowledged\n",
+                    );
                     try self.io_req_buf.append(req);
                 },
                 .send => {
@@ -87,8 +90,9 @@ pub fn StateMachine(
                 },
                 .recv => {
                     const buf_len: usize = @intCast(response.rc);
-                    const msg = self.recv_buf[0..buf_len];
-                    debug.print("Msg received: {s}\n", .{msg});
+                    debug.print("Msg received: {s}\n", .{
+                        self.recv_buf[0..buf_len],
+                    });
 
                     const id = res_ud.client_id;
                     const ud = UsrData{ .op = .recv, .client_id = id };
@@ -102,6 +106,25 @@ pub fn StateMachine(
             return self.io_req_buf.constSlice();
         }
     };
+}
+
+pub fn Socket(comptime FD: type) type {
+    return struct {
+        pub const Client = enum(FD) { _ };
+        pub const Server = enum(FD) { _ };
+
+        pub fn client_eql(a: Client, b: Client) bool {
+            return std.meta.eql(a, b);
+        }
+
+        pub fn server_eql(a: Server, b: Server) bool {
+            return std.meta.eql(a, b);
+        }
+    };
+}
+
+pub fn Response(comptime FD: type) type {
+    return struct { rc: FD, usr_data: u64 };
 }
 
 /// Data passed to async io systems

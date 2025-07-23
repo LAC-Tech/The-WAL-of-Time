@@ -4,6 +4,10 @@ const mem = std.mem;
 
 const util = @import("./util.zig");
 
+const config = struct {
+    const max_io_req: usize = 2;
+};
+
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
 pub fn StateMachine(
@@ -20,7 +24,7 @@ pub fn StateMachine(
         limits.max_clients,
         .{ .duplicates = false },
     );
-    const AioReqs = std.BoundedArray(AIOReq.T, 2);
+    const AioReqs = std.BoundedArray(AIOReq.T, config.max_io_req);
 
     return struct {
         clients: Clients,

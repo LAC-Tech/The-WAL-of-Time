@@ -41,23 +41,31 @@ pub fn StateMachine(
             allocator.free(self.recv_buf);
         }
 
-        pub fn initial_aio_req(
+        /// Needs to be run before transition
+        // Note: It is tempting to put this in init
+        // However then we either need to return two things from init, OR this
+        // struct needs to become aware of where to send requests.
+        pub fn initial_transition(
             self: *@This(),
-            fd: FD.ServerSock.T,
+            server_fd: FD.ServerSock.T,
         ) ![]const AIOReq.T {
             const usr_data: UsrData = .{ .op = .accept };
-            const req = AIOReq.accept_multishot(@bitCast(usr_data), fd);
+            const req = AIOReq.accept_multishot(@bitCast(usr_data), server_fd);
             try self.io_req_buf.append(req);
             return self.io_req_buf.constSlice();
         }
 
-        pub fn transition(self: *@This(), res: FD.IORes) ![]const AIOReq.T {
+        /// State Machine Transition Function
+        pub fn transition(
+            self: *@This(),
+            response: FD.IORes,
+        ) ![]const AIOReq.T {
             self.io_req_buf.clear();
-            const res_ud: UsrData = @bitCast(res.usr_data);
+            const res_ud: UsrData = @bitCast(response.usr_data);
 
             switch (res_ud.op) {
                 .accept => {
-                    const fd: FD.ClientSock.T = @enumFromInt(res.rc);
+                    const fd: FD.ClientSock.T = @enumFromInt(response.rc);
                     const id = try self.clients.add(fd);
                     const ud = UsrData{ .op = .send, .client_id = id };
                     const msg = "connection acknowledged\n";
@@ -74,7 +82,7 @@ pub fn StateMachine(
                     try self.io_req_buf.append(req);
                 },
                 .recv => {
-                    const buf_len: usize = @intCast(res.rc);
+                    const buf_len: usize = @intCast(response.rc);
                     const msg = self.recv_buf[0..buf_len];
                     debug.print("Msg received: {s}\n", .{msg});
 

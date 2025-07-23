@@ -25,7 +25,7 @@ pub fn main() !void {
             ).init(allocator);
             defer sm.deinit(allocator);
 
-            const initiaReqs = try sm.initial_aio_req(aio.server_fd);
+            const initiaReqs = try sm.initial_transition(aio.server_fd);
             debug.assert(try aio.send(initiaReqs) == initiaReqs.len);
 
             debug.print("The WAL weaves as the WAL wills\n", .{});

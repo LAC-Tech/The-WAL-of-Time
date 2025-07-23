@@ -31,7 +31,7 @@ pub const AsyncIO = struct {
     processing: TickQueue(Req.T, 8),
     /// Intermediate state; req has been executed, but not seen by user
     completed: TickQueue(FD.IORes, 8),
-    socket_fd: FD.ServerSock.T,
+    server_fd: FD.ServerSock.T,
     rng: *Rng,
     ticks: *const u64,
     client_fds: ClientFDs,
@@ -43,7 +43,7 @@ pub const AsyncIO = struct {
         return .{
             .processing = try TickQueue(Req.T, 8).init(),
             .completed = try TickQueue(FD.IORes, 8).init(),
-            .socket_fd = @enumFromInt(rng.random().int(FD.Int)),
+            .server_fd = @enumFromInt(rng.random().int(FD.Int)),
             .rng = rng,
             .ticks = ticks,
             .client_fds = ClientFDs.initEmpty(),

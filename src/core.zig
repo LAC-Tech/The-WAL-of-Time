@@ -28,13 +28,13 @@ pub fn StateMachine(
     const AioReqs = std.BoundedArray(AIOReq.T, config.max_io_req);
 
     return struct {
-        clients: Clients,
+        client_sockets: Clients,
         recv_buf: []u8,
         io_req_buf: AioReqs,
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .clients = try Clients.init(allocator),
+                .client_sockets = try Clients.init(allocator),
                 // TODO: one of these per client? they can be overwritten
                 .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
                 .io_req_buf = try AioReqs.init(0),
@@ -42,7 +42,7 @@ pub fn StateMachine(
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.clients.deinit(allocator);
+            self.client_sockets.deinit(allocator);
             allocator.free(self.recv_buf);
         }
 
@@ -54,7 +54,7 @@ pub fn StateMachine(
             self: *@This(),
             server_fd: Sock.Server,
         ) ![]const AIOReq.T {
-            const usr_data: UsrData = .{ .op = .accept };
+            const usr_data: UsrData = .{ .io_op = .accept };
             const req = AIOReq.accept_multishot(@bitCast(usr_data), server_fd);
             try self.io_req_buf.append(req);
             return self.io_req_buf.constSlice();
@@ -66,13 +66,14 @@ pub fn StateMachine(
             response: Response(FD),
         ) ![]const AIOReq.T {
             self.io_req_buf.clear();
-            const res_ud: UsrData = @bitCast(response.usr_data);
+            var res_ud: UsrData = @bitCast(response.usr_data);
 
-            switch (res_ud.op) {
+            switch (res_ud.io_op) {
                 .accept => {
                     const fd: Sock.Client = @enumFromInt(response.rc);
-                    const id = try self.clients.add(fd);
-                    const ud = UsrData{ .op = .send, .client_id = id };
+                    // TODO: under what conditions does this fail?
+                    const id = try self.client_sockets.add(fd);
+                    const ud = UsrData{ .io_op = .send, .client_id = id };
                     const req = AIOReq.send(
                         @bitCast(ud),
                         fd,
@@ -80,23 +81,28 @@ pub fn StateMachine(
                     );
                     try self.io_req_buf.append(req);
                 },
+                // TODO: just echoes back recv buf to client
+                // should say whether a sent operation failed or suceeeded
                 .send => {
-                    const id = res_ud.client_id;
-                    const ud = UsrData{ .op = .recv, .client_id = id };
-                    const fd = self.clients.get(id).?;
-                    const req = AIOReq.recv(@bitCast(ud), fd, self.recv_buf);
+                    res_ud.io_op = .recv;
+                    const req = AIOReq.recv(
+                        @bitCast(res_ud),
+                        self.client_sockets.get(res_ud.client_id).?,
+                        self.recv_buf,
+                    );
 
                     try self.io_req_buf.append(req);
                 },
                 .recv => {
                     const buf_len: usize = @intCast(response.rc);
-                    debug.print("Msg received: {s}\n", .{
+                    debug.print("Client {d} sent {s}\n", .{
+                        res_ud.client_id,
                         self.recv_buf[0..buf_len],
                     });
 
                     const id = res_ud.client_id;
-                    const ud = UsrData{ .op = .recv, .client_id = id };
-                    const fd = self.clients.get(res_ud.client_id).?;
+                    const ud = UsrData{ .io_op = .recv, .client_id = id };
+                    const fd = self.client_sockets.get(res_ud.client_id).?;
                     const req = AIOReq.recv(@bitCast(ud), fd, self.recv_buf);
 
                     try self.io_req_buf.append(req);
@@ -127,9 +133,12 @@ pub fn Response(comptime FD: type) type {
 /// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
 /// Can't  be a tagged union; zig can't bitcast those
 const UsrData = packed struct(u64) {
-    op: enum(u8) { accept, send, recv },
+    /// OS level operation
+    io_op: enum(u8) { accept, send, recv },
+    /// DB level operation
+    verb: enum(u8) { create, append, delete } = undefined,
     client_id: u8 = undefined,
-    _padding: u48 = 0,
+    _padding: u40 = 0,
 };
 
 comptime {

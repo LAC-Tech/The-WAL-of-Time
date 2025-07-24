@@ -8,42 +8,30 @@ const config = struct {
     const max_io_req: usize = 2;
 };
 
+const Limits = struct { max_clients: usize, write_buf_size: usize };
+
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
 pub fn StateMachine(
     comptime FD: type,
-    comptime AIOReq: type,
-    comptime limits: struct {
-        max_clients: comptime_int,
-        write_buf_size: comptime_int,
-    },
+    comptime IOReq: type,
+    comptime limits: Limits,
 ) type {
-    const Sock = Socket(FD);
-    const Clients = util.SlotMap(
-        Sock.Client,
-        Sock.client_eql,
-        limits.max_clients,
-        .{ .duplicates = false },
-    );
-    const AioReqs = std.BoundedArray(AIOReq.T, config.max_io_req);
+    const IOReqs = std.BoundedArray(IOReq.T, config.max_io_req);
 
     return struct {
-        client_sockets: Clients,
-        recv_buf: []u8,
-        io_req_buf: AioReqs,
+        io_req_buf: IOReqs,
+        state: State(FD, IOReq, limits),
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .client_sockets = try Clients.init(allocator),
-                // TODO: one of these per client? they can be overwritten
-                .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
-                .io_req_buf = try AioReqs.init(0),
+                .state = try State(FD, IOReq, limits).init(allocator),
+                .io_req_buf = try IOReqs.init(0),
             };
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.client_sockets.deinit(allocator);
-            allocator.free(self.recv_buf);
+            self.state.deinit(allocator);
         }
 
         /// Needs to be run before transition
@@ -52,10 +40,12 @@ pub fn StateMachine(
         // struct needs to become aware of where to send requests.
         pub fn initial_transition(
             self: *@This(),
-            server_fd: Sock.Server,
-        ) ![]const AIOReq.T {
-            const usr_data: UsrData = .{ .io_op = .accept };
-            const req = AIOReq.accept_multishot(@bitCast(usr_data), server_fd);
+            server_fd: Socket(FD).Server,
+        ) ![]const IOReq.T {
+            const req = IOReq.accept_multishot(
+                @bitCast(UsrData{ .op = .accept_client_conn }),
+                server_fd,
+            );
             try self.io_req_buf.append(req);
             return self.io_req_buf.constSlice();
         }
@@ -64,52 +54,123 @@ pub fn StateMachine(
         pub fn transition(
             self: *@This(),
             response: Response(FD),
-        ) ![]const AIOReq.T {
+        ) ![]const IOReq.T {
             self.io_req_buf.clear();
-            var res_ud: UsrData = @bitCast(response.usr_data);
+            const res_ud: UsrData = @bitCast(response.usr_data);
 
-            switch (res_ud.io_op) {
-                .accept => {
-                    const fd: Sock.Client = @enumFromInt(response.rc);
-                    // TODO: under what conditions does this fail?
-                    const id = try self.client_sockets.add(fd);
-                    const ud = UsrData{ .io_op = .send, .client_id = id };
-                    const req = AIOReq.send(
-                        @bitCast(ud),
-                        fd,
-                        "connection acknowledged\n",
-                    );
-                    try self.io_req_buf.append(req);
+            switch (res_ud.op) {
+                .accept_client_conn => {
+                    const io_req = self.state.accept_client_conn(response);
+                    try self.io_req_buf.append(io_req);
                 },
-                // TODO: just echoes back recv buf to client
-                // should say whether a sent operation failed or suceeeded
-                .send => {
-                    res_ud.io_op = .recv;
-                    const req = AIOReq.recv(
-                        @bitCast(res_ud),
-                        self.client_sockets.get(res_ud.client_id).?,
-                        self.recv_buf,
-                    );
-
-                    try self.io_req_buf.append(req);
+                .send_ack_new_conn => {
+                    const io_req = self.state.send_ack_new_conn(response);
+                    try self.io_req_buf.append(io_req);
                 },
+                .send_no_new_conn => {
+                    @panic("TODO: handle this case");
+                },
+                // TODO: this just puts the req on the ring again...
                 .recv => {
-                    const buf_len: usize = @intCast(response.rc);
-                    debug.print("Client {d} sent {s}\n", .{
-                        res_ud.client_id,
-                        self.recv_buf[0..buf_len],
-                    });
-
-                    const id = res_ud.client_id;
-                    const ud = UsrData{ .io_op = .recv, .client_id = id };
-                    const fd = self.client_sockets.get(res_ud.client_id).?;
-                    const req = AIOReq.recv(@bitCast(ud), fd, self.recv_buf);
-
-                    try self.io_req_buf.append(req);
+                    const io_req = self.state.recv(response);
+                    try self.io_req_buf.append(io_req);
                 },
             }
 
             return self.io_req_buf.constSlice();
+        }
+    };
+}
+
+fn State(
+    comptime FD: type,
+    comptime IOReq: type,
+    comptime limits: Limits,
+) type {
+    return struct {
+        const Sock = Socket(FD);
+        const ClientSockets = util.SlotMap(
+            Sock.Client,
+            Sock.client_eql,
+            limits.max_clients,
+            .{ .duplicates = false },
+        );
+
+        client_sockets: ClientSockets,
+        recv_buf: []u8,
+
+        fn init(allocator: mem.Allocator) !@This() {
+            return .{
+                .client_sockets = try ClientSockets.init(allocator),
+                // TODO: one of these per client? they can be overwritten
+                .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
+            };
+        }
+
+        fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            self.client_sockets.deinit(allocator);
+            allocator.free(self.recv_buf);
+        }
+
+        fn accept_client_conn(self: *@This(), res: Response(FD)) IOReq.T {
+            const fd: Sock.Client = @enumFromInt(res.rc);
+
+            if (self.client_sockets.add(fd)) |client_id| {
+                const ud: UsrData = .{
+                    .op = .send_ack_new_conn,
+                    .client_id = client_id,
+                };
+
+                return IOReq.send(
+                    @bitCast(ud),
+                    fd,
+                    "connection acknowledged\n",
+                );
+            } else |err| switch (err) {
+                error.Duplicate => {
+                    const ud: UsrData = .{ .op = .send_no_new_conn };
+
+                    return IOReq.send(
+                        @bitCast(ud),
+                        fd,
+                        "client already connected\n",
+                    );
+                },
+                error.Overflow => {
+                    const ud: UsrData = .{ .op = .send_no_new_conn };
+
+                    return IOReq.send(
+                        @bitCast(ud),
+                        fd,
+                        "err: maximum connections reached\n",
+                    );
+                },
+            }
+        }
+
+        fn send_ack_new_conn(self: *@This(), res: Response(FD)) IOReq.T {
+            var res_ud: UsrData = @bitCast(res.usr_data);
+            res_ud.op = .recv;
+            return IOReq.recv(
+                @bitCast(res_ud),
+                self.client_sockets.get(res_ud.client_id).?,
+                self.recv_buf,
+            );
+        }
+
+        fn recv(self: *@This(), res: Response(FD)) IOReq.T {
+            const res_ud: UsrData = @bitCast(res.usr_data);
+            const buf_len: usize = @intCast(res.rc);
+            debug.print("Client {d} sent {s}", .{
+                res_ud.client_id,
+                self.recv_buf[0..buf_len],
+            });
+
+            return IOReq.recv(
+                @bitCast(res_ud),
+                self.client_sockets.get(res_ud.client_id).?,
+                self.recv_buf,
+            );
         }
     };
 }
@@ -133,8 +194,12 @@ pub fn Response(comptime FD: type) type {
 /// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
 /// Can't  be a tagged union; zig can't bitcast those
 const UsrData = packed struct(u64) {
-    /// OS level operation
-    io_op: enum(u8) { accept, send, recv },
+    op: enum(u8) {
+        accept_client_conn,
+        send_ack_new_conn,
+        send_no_new_conn,
+        recv,
+    },
     /// DB level operation
     verb: enum(u8) { create, append, delete } = undefined,
     client_id: u8 = undefined,

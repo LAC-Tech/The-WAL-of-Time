@@ -4,13 +4,16 @@ const mem = std.mem;
 const net = std.net;
 const posix = std.posix;
 
-pub const FD = @import("./fd.zig").module(posix.socket_t);
+pub const FD = posix.fd_t;
+const core = @import("./core.zig");
+const Sock = core.Socket(FD);
+const Res = core.OSResponse(FD);
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
     ring: linux.IoUring,
-    server_fd: FD.ServerSock.T,
+    server_fd: core.Socket(FD).Server,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
@@ -19,7 +22,7 @@ pub const AsyncIO = struct {
         const entries = 128;
         const ring = try linux.IoUring.init(entries, 0);
 
-        const fd = try posix.socket(
+        const fd: FD = try posix.socket(
             posix.AF.INET,
             posix.SOCK.STREAM,
             posix.IPPROTO.TCP,
@@ -57,7 +60,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn await_res(self: *@This()) !FD.IORes {
+    pub fn await_res(self: *@This()) !Res {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -72,21 +75,21 @@ pub const AsyncIO = struct {
 pub const Req = struct {
     pub const T = linux.io_uring_sqe;
 
-    pub fn accept_multishot(usr_data: u64, fd: FD.ServerSock.T) T {
+    pub fn accept_multishot(usr_data: u64, fd: Sock.Server) T {
         var result = mem.zeroes(T);
         result.prep_multishot_accept(@intFromEnum(fd), null, null, 0);
         result.user_data = usr_data;
         return result;
     }
 
-    pub fn recv(usr_data: u64, fd: FD.ClientSock.T, buf: []u8) T {
+    pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
         var result = mem.zeroes(T);
         result.prep_recv(@intFromEnum(fd), buf, 0);
         result.user_data = usr_data;
         return result;
     }
 
-    pub fn send(usr_data: u64, fd: FD.ClientSock.T, buf: []const u8) T {
+    pub fn send(usr_data: u64, fd: Sock.Client, buf: []const u8) T {
         var result = mem.zeroes(T);
         result.prep_send(@intFromEnum(fd), buf, 0);
         result.user_data = usr_data;

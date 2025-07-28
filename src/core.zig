@@ -18,13 +18,28 @@ pub fn StateMachine(
     comptime OSRequest: type,
     comptime limits: Limits,
 ) type {
+    comptime {
+        // Make sure it fits in the slot map
+        debug.assert(256 > limits.max_clients);
+    }
+
     return struct {
+        const ClientSockets = util.SlotMap(
+            Socket(FD).Client,
+            Socket(FD).client_eql,
+            limits.max_clients,
+            .{ .duplicates = false },
+        );
+
+        client_sockets: ClientSockets,
+        recv_buf: []u8,
         os_req_buf: BoundedArray(OSRequest.T, config.max_io_req),
-        state: State(FD, OSRequest, limits),
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .state = try State(FD, OSRequest, limits).init(allocator),
+                .client_sockets = try ClientSockets.init(allocator),
+                // TODO: one of these per client? they can be overwritten
+                .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
                 .os_req_buf = try BoundedArray(
                     OSRequest.T,
                     config.max_io_req,
@@ -33,7 +48,8 @@ pub fn StateMachine(
         }
 
         pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.state.deinit(allocator);
+            self.client_sockets.deinit(allocator);
+            allocator.free(self.recv_buf);
         }
 
         /// Needs to be run before transition
@@ -53,24 +69,24 @@ pub fn StateMachine(
         }
 
         /// State Machine Transition Function
+        /// After the OS respondes with information about an action that's been
+        /// completed, the state machines calculates what it should request
+        /// from the OS in response.
         pub fn transition(
             self: *@This(),
             response: OSResponse(FD),
         ) ![]const OSRequest.T {
             self.os_req_buf.clear();
-            const res_ud: UsrData = @bitCast(response.usr_data);
+            var res_ud: UsrData = @bitCast(response.usr_data);
 
             switch (res_ud.op) {
                 .accept_client_conn => {
                     const fd: Socket(FD).Client = @enumFromInt(response.rc);
 
-                    if (self.state.client_sockets.add(fd)) |client_id| {
+                    if (self.client_sockets.add(fd)) |client_id| {
                         try self.enqueue_os_send_req(
                             fd,
-                            .{
-                                .op = .send_ack_new_conn,
-                                .client_id = client_id,
-                            },
+                            .{ .op = .send_conn_ack, .client_id = client_id },
                             "connection acknowledged\n",
                         );
                     } else |err| switch (err) {
@@ -90,8 +106,13 @@ pub fn StateMachine(
                         },
                     }
                 },
-                .send_ack_new_conn => {
-                    const os_req = self.state.send_ack_new_conn(response);
+                .send_conn_ack => {
+                    res_ud.op = .recv;
+                    const os_req = OSRequest.recv(
+                        res_ud.to_u64(),
+                        self.client_sockets.get(res_ud.client_id).?,
+                        self.recv_buf,
+                    );
                     try self.os_req_buf.append(os_req);
                 },
                 .send_no_new_conn => {
@@ -99,7 +120,18 @@ pub fn StateMachine(
                 },
                 // TODO: this just puts the req on the ring again...
                 .recv => {
-                    const os_req = self.state.recv(response);
+                    const buf_len: usize = @intCast(response.rc);
+                    debug.print("Client {d} sent {s}", .{
+                        res_ud.client_id,
+                        self.recv_buf[0..buf_len],
+                    });
+
+                    const os_req = OSRequest.recv(
+                        res_ud.to_u64(),
+                        self.client_sockets.get(res_ud.client_id).?,
+                        self.recv_buf,
+                    );
+
                     try self.os_req_buf.append(os_req);
                 },
             }
@@ -115,63 +147,6 @@ pub fn StateMachine(
         ) !void {
             const os_req = OSRequest.send(@bitCast(ud), fd, msg);
             try self.os_req_buf.append(os_req);
-        }
-    };
-}
-
-fn State(
-    comptime FD: type,
-    comptime OSReq: type,
-    comptime limits: Limits,
-) type {
-    return struct {
-        const Sock = Socket(FD);
-        const ClientSockets = util.SlotMap(
-            Sock.Client,
-            Sock.client_eql,
-            limits.max_clients,
-            .{ .duplicates = false },
-        );
-
-        client_sockets: ClientSockets,
-        recv_buf: []u8,
-
-        fn init(allocator: mem.Allocator) !@This() {
-            return .{
-                .client_sockets = try ClientSockets.init(allocator),
-                // TODO: one of these per client? they can be overwritten
-                .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
-            };
-        }
-
-        fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            self.client_sockets.deinit(allocator);
-            allocator.free(self.recv_buf);
-        }
-
-        fn send_ack_new_conn(self: *@This(), res: OSResponse(FD)) OSReq.T {
-            var res_ud = UsrData.from_u64(res.usr_data);
-            res_ud.op = .recv;
-            return OSReq.recv(
-                res_ud.to_u64(),
-                self.client_sockets.get(res_ud.client_id).?,
-                self.recv_buf,
-            );
-        }
-
-        fn recv(self: *@This(), res: OSResponse(FD)) OSReq.T {
-            const res_ud = UsrData.from_u64(res.usr_data);
-            const buf_len: usize = @intCast(res.rc);
-            debug.print("Client {d} sent {s}", .{
-                res_ud.client_id,
-                self.recv_buf[0..buf_len],
-            });
-
-            return OSReq.recv(
-                res_ud.to_u64(),
-                self.client_sockets.get(res_ud.client_id).?,
-                self.recv_buf,
-            );
         }
     };
 }
@@ -197,7 +172,7 @@ pub fn OSResponse(comptime FD: type) type {
 const UsrData = packed struct(u64) {
     op: enum(u8) {
         accept_client_conn,
-        send_ack_new_conn,
+        send_conn_ack,
         send_no_new_conn,
         recv,
     },

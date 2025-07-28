@@ -1,4 +1,3 @@
 write "op arg" type client vm thing. ct for create topic. ops are 1 bytes
-implement create topic logic
 Try multi-shot recv so I don't have to keep putting it back in the queue
-tidy up transition function.
+implement create topic logic

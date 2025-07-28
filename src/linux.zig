@@ -84,7 +84,7 @@ pub const Req = struct {
 
     pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
         var result = mem.zeroes(T);
-        result.prep_recv(@intFromEnum(fd), buf, 0);
+        result.prep_recv_multishot(@intFromEnum(fd), buf, 0);
         result.user_data = usr_data;
         return result;
     }

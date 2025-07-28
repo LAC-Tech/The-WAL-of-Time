@@ -9,14 +9,12 @@ const config = struct {
     const max_io_req: usize = 2;
 };
 
-const Limits = struct { max_clients: usize, write_buf_size: usize };
-
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running
 pub fn StateMachine(
     comptime FD: type,
     comptime OSRequest: type,
-    comptime limits: Limits,
+    comptime limits: struct { max_clients: usize, write_buf_size: usize },
 ) type {
     comptime {
         // Make sure it fits in the slot map
@@ -70,8 +68,7 @@ pub fn StateMachine(
 
         /// State Machine Transition Function
         /// After the OS respondes with information about an action that's been
-        /// completed, the state machines calculates what it should request
-        /// from the OS in response.
+        /// completed, the state machines calculates
         pub fn transition(
             self: *@This(),
             response: OSResponse(FD),
@@ -81,6 +78,7 @@ pub fn StateMachine(
 
             switch (res_ud.op) {
                 .accept_client_conn => {
+                    debug.print("accept client conn\n", .{});
                     const fd: Socket(FD).Client = @enumFromInt(response.rc);
 
                     if (self.client_sockets.add(fd)) |client_id| {
@@ -107,6 +105,7 @@ pub fn StateMachine(
                     }
                 },
                 .send_conn_ack => {
+                    debug.print("send conn ack\n", .{});
                     res_ud.op = .recv;
                     const os_req = OSRequest.recv(
                         res_ud.to_u64(),
@@ -120,19 +119,20 @@ pub fn StateMachine(
                 },
                 // TODO: this just puts the req on the ring again...
                 .recv => {
+                    debug.print("recv\n", .{});
                     const buf_len: usize = @intCast(response.rc);
                     debug.print("Client {d} sent {s}", .{
                         res_ud.client_id,
                         self.recv_buf[0..buf_len],
                     });
 
-                    const os_req = OSRequest.recv(
-                        res_ud.to_u64(),
-                        self.client_sockets.get(res_ud.client_id).?,
-                        self.recv_buf,
-                    );
+                    //const os_req = OSRequest.recv(
+                    //    res_ud.to_u64(),
+                    //    self.client_sockets.get(res_ud.client_id).?,
+                    //    self.recv_buf,
+                    //);
 
-                    try self.os_req_buf.append(os_req);
+                    //try self.os_req_buf.append(os_req);
                 },
             }
 

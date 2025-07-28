@@ -8,7 +8,7 @@ const testing = std.testing;
 
 pub const FD = u8;
 const core = @import("./core.zig");
-const Res = core.Response(FD);
+const Res = core.OSResponse(FD);
 const Sock = core.Socket(FD);
 
 const util = @import("./util.zig");

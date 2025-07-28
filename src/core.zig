@@ -1,4 +1,5 @@
 const std = @import("std");
+const BoundedArray = std.BoundedArray;
 const debug = std.debug;
 const mem = std.mem;
 
@@ -14,19 +15,20 @@ const Limits = struct { max_clients: usize, write_buf_size: usize };
 /// node is running
 pub fn StateMachine(
     comptime FD: type,
-    comptime IOReq: type,
+    comptime OSRequest: type,
     comptime limits: Limits,
 ) type {
-    const IOReqs = std.BoundedArray(IOReq.T, config.max_io_req);
-
     return struct {
-        io_req_buf: IOReqs,
-        state: State(FD, IOReq, limits),
+        os_req_buf: BoundedArray(OSRequest.T, config.max_io_req),
+        state: State(FD, OSRequest, limits),
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
-                .state = try State(FD, IOReq, limits).init(allocator),
-                .io_req_buf = try IOReqs.init(0),
+                .state = try State(FD, OSRequest, limits).init(allocator),
+                .os_req_buf = try BoundedArray(
+                    OSRequest.T,
+                    config.max_io_req,
+                ).init(0),
             };
         }
 
@@ -41,50 +43,85 @@ pub fn StateMachine(
         pub fn initial_transition(
             self: *@This(),
             server_fd: Socket(FD).Server,
-        ) ![]const IOReq.T {
-            const req = IOReq.accept_multishot(
+        ) ![]const OSRequest.T {
+            const req = OSRequest.accept_multishot(
                 @bitCast(UsrData{ .op = .accept_client_conn }),
                 server_fd,
             );
-            try self.io_req_buf.append(req);
-            return self.io_req_buf.constSlice();
+            try self.os_req_buf.append(req);
+            return self.os_req_buf.constSlice();
         }
 
         /// State Machine Transition Function
         pub fn transition(
             self: *@This(),
-            response: Response(FD),
-        ) ![]const IOReq.T {
-            self.io_req_buf.clear();
+            response: OSResponse(FD),
+        ) ![]const OSRequest.T {
+            self.os_req_buf.clear();
             const res_ud: UsrData = @bitCast(response.usr_data);
 
             switch (res_ud.op) {
                 .accept_client_conn => {
-                    const io_req = self.state.accept_client_conn(response);
-                    try self.io_req_buf.append(io_req);
+                    const fd: Socket(FD).Client = @enumFromInt(response.rc);
+
+                    if (self.state.client_sockets.add(fd)) |client_id| {
+                        try self.enqueue_os_send_req(
+                            fd,
+                            .{
+                                .op = .send_ack_new_conn,
+                                .client_id = client_id,
+                            },
+                            "connection acknowledged\n",
+                        );
+                    } else |err| switch (err) {
+                        error.Duplicate => {
+                            try self.enqueue_os_send_req(
+                                fd,
+                                .{ .op = .send_no_new_conn },
+                                "client already connected\n",
+                            );
+                        },
+                        error.Overflow => {
+                            try self.enqueue_os_send_req(
+                                fd,
+                                .{ .op = .send_no_new_conn },
+                                "err: maximum connections reached\n",
+                            );
+                        },
+                    }
                 },
                 .send_ack_new_conn => {
-                    const io_req = self.state.send_ack_new_conn(response);
-                    try self.io_req_buf.append(io_req);
+                    const os_req = self.state.send_ack_new_conn(response);
+                    try self.os_req_buf.append(os_req);
                 },
                 .send_no_new_conn => {
                     @panic("TODO: handle this case");
                 },
                 // TODO: this just puts the req on the ring again...
                 .recv => {
-                    const io_req = self.state.recv(response);
-                    try self.io_req_buf.append(io_req);
+                    const os_req = self.state.recv(response);
+                    try self.os_req_buf.append(os_req);
                 },
             }
 
-            return self.io_req_buf.constSlice();
+            return self.os_req_buf.constSlice();
+        }
+
+        fn enqueue_os_send_req(
+            self: *@This(),
+            fd: Socket(FD).Client,
+            ud: UsrData,
+            msg: []const u8,
+        ) !void {
+            const os_req = OSRequest.send(@bitCast(ud), fd, msg);
+            try self.os_req_buf.append(os_req);
         }
     };
 }
 
 fn State(
     comptime FD: type,
-    comptime IOReq: type,
+    comptime OSReq: type,
     comptime limits: Limits,
 ) type {
     return struct {
@@ -112,62 +149,26 @@ fn State(
             allocator.free(self.recv_buf);
         }
 
-        fn accept_client_conn(self: *@This(), res: Response(FD)) IOReq.T {
-            const fd: Sock.Client = @enumFromInt(res.rc);
-
-            if (self.client_sockets.add(fd)) |client_id| {
-                const ud: UsrData = .{
-                    .op = .send_ack_new_conn,
-                    .client_id = client_id,
-                };
-
-                return IOReq.send(
-                    @bitCast(ud),
-                    fd,
-                    "connection acknowledged\n",
-                );
-            } else |err| switch (err) {
-                error.Duplicate => {
-                    const ud: UsrData = .{ .op = .send_no_new_conn };
-
-                    return IOReq.send(
-                        @bitCast(ud),
-                        fd,
-                        "client already connected\n",
-                    );
-                },
-                error.Overflow => {
-                    const ud: UsrData = .{ .op = .send_no_new_conn };
-
-                    return IOReq.send(
-                        @bitCast(ud),
-                        fd,
-                        "err: maximum connections reached\n",
-                    );
-                },
-            }
-        }
-
-        fn send_ack_new_conn(self: *@This(), res: Response(FD)) IOReq.T {
-            var res_ud: UsrData = @bitCast(res.usr_data);
+        fn send_ack_new_conn(self: *@This(), res: OSResponse(FD)) OSReq.T {
+            var res_ud = UsrData.from_u64(res.usr_data);
             res_ud.op = .recv;
-            return IOReq.recv(
-                @bitCast(res_ud),
+            return OSReq.recv(
+                res_ud.to_u64(),
                 self.client_sockets.get(res_ud.client_id).?,
                 self.recv_buf,
             );
         }
 
-        fn recv(self: *@This(), res: Response(FD)) IOReq.T {
-            const res_ud: UsrData = @bitCast(res.usr_data);
+        fn recv(self: *@This(), res: OSResponse(FD)) OSReq.T {
+            const res_ud = UsrData.from_u64(res.usr_data);
             const buf_len: usize = @intCast(res.rc);
             debug.print("Client {d} sent {s}", .{
                 res_ud.client_id,
                 self.recv_buf[0..buf_len],
             });
 
-            return IOReq.recv(
-                @bitCast(res_ud),
+            return OSReq.recv(
+                res_ud.to_u64(),
                 self.client_sockets.get(res_ud.client_id).?,
                 self.recv_buf,
             );
@@ -186,7 +187,7 @@ pub fn Socket(comptime FD: type) type {
     };
 }
 
-pub fn Response(comptime FD: type) type {
+pub fn OSResponse(comptime FD: type) type {
     return struct { rc: FD, usr_data: u64 };
 }
 
@@ -204,6 +205,14 @@ const UsrData = packed struct(u64) {
     verb: enum(u8) { create, append, delete } = undefined,
     client_id: u8 = undefined,
     _padding: u40 = 0,
+
+    fn to_u64(self: UsrData) u64 {
+        return @bitCast(self);
+    }
+
+    fn from_u64(n: u64) UsrData {
+        return @bitCast(n);
+    }
 };
 
 comptime {

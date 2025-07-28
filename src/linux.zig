@@ -7,7 +7,7 @@ const posix = std.posix;
 pub const FD = posix.fd_t;
 const core = @import("./core.zig");
 const Sock = core.Socket(FD);
-const Res = core.Response(FD);
+const Res = core.OSResponse(FD);
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version

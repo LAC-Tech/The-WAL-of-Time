@@ -50,7 +50,7 @@ pub fn StateMachine(
             allocator.free(self.recv_buf);
         }
 
-        /// Needs to be run before transition
+        /// OS requests that need to be submitted before the main loop runs.
         // Note: It is tempting to put this in init
         // However then we either need to return two things from init, OR this
         // struct needs to become aware of where to send requests.
@@ -58,17 +58,23 @@ pub fn StateMachine(
             self: *@This(),
             server_fd: Socket(FD).Server,
         ) ![]const OSRequest.T {
-            const req = OSRequest.accept_multishot(
-                @bitCast(UsrData{ .op = .accept_client_conn }),
-                server_fd,
-            );
-            try self.os_req_buf.append(req);
+            // Unlimited accepts!
+            {
+                const req = OSRequest.multishot.accept(
+                    @bitCast(UsrData{ .op = .accept_client_conn }),
+                    server_fd,
+                );
+                try self.os_req_buf.append(req);
+            }
             return self.os_req_buf.constSlice();
         }
 
         /// State Machine Transition Function
         /// After the OS respondes with information about an action that's been
-        /// completed, the state machines calculates
+        /// completed, the state machines calculates what to request from the
+        /// OS.
+        /// Note: the return value is only valid until the next time the
+        /// function is called.
         pub fn transition(
             self: *@This(),
             response: OSResponse(FD),
@@ -107,7 +113,7 @@ pub fn StateMachine(
                 .send_conn_ack => {
                     debug.print("send conn ack\n", .{});
                     res_ud.op = .recv;
-                    const os_req = OSRequest.recv(
+                    const os_req = OSRequest.multishot.recv(
                         res_ud.to_u64(),
                         self.client_sockets.get(res_ud.client_id).?,
                         self.recv_buf,
@@ -145,7 +151,7 @@ pub fn StateMachine(
             ud: UsrData,
             msg: []const u8,
         ) !void {
-            const os_req = OSRequest.send(@bitCast(ud), fd, msg);
+            const os_req = OSRequest.oneshot.send(@bitCast(ud), fd, msg);
             try self.os_req_buf.append(os_req);
         }
     };

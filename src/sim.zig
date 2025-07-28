@@ -76,12 +76,13 @@ pub const AsyncIO = struct {
 
     // TODO this may belong in a separate struct that wraps client FDs
     fn exec(self: *@This(), req: Req.T) !Res {
-        switch (req) {
-            // Ignored the socket arg; not relevant in sim?
-            .accept => |a| {
-                const fd = self.rng.random().int(FD);
-                self.client_fds.set(fd);
-                return .{ .rc = fd, .usr_data = a.usr_data };
+        switch (req.op) {
+            // TODO: Ignored the socket arg; this seems like a massive error
+            .accept => |_| {
+                @panic("Read your TODO comment");
+                //const fd = self.rng.random().int(FD);
+                //self.client_fds.set(fd);
+                //return .{ .rc = fd, .usr_data = req.usr_data };
             },
             .recv => |r| {
                 const fd = @intFromEnum(r.fd);
@@ -94,7 +95,7 @@ pub const AsyncIO = struct {
 
                 return .{
                     .rc = @intCast(r.buf.len),
-                    .usr_data = r.usr_data,
+                    .usr_data = req.usr_data,
                 };
             },
             .send => |s| {
@@ -105,7 +106,7 @@ pub const AsyncIO = struct {
 
                 return .{
                     .rc = @intCast(s.buf.len),
-                    .usr_data = s.usr_data,
+                    .usr_data = req.usr_data,
                 };
             },
         }
@@ -150,29 +151,45 @@ fn TickQueue(comptime Item: type, comptime capacity: usize) type {
 }
 
 pub const Req = struct {
-    pub const T = union(enum) {
-        accept: struct { usr_data: u64, fd: Sock.Server },
-        recv: struct { usr_data: u64, fd: Sock.Client, buf: []u8 },
-        send: struct { usr_data: u64, fd: Sock.Client, buf: []const u8 },
+    const Shot = enum { multi, one };
+
+    pub const T = struct {
+        op: union(enum) {
+            accept: struct { fd: Sock.Server },
+            recv: struct { fd: Sock.Client, buf: []u8 },
+            send: struct { fd: Sock.Client, buf: []const u8 },
+        },
+        shot: Shot,
+        usr_data: u64,
     };
 
-    pub fn accept_multishot(usr_data: u64, fd: Sock.Server) T {
-        return .{
-            .accept = .{ .usr_data = usr_data, .fd = fd },
-        };
-    }
+    pub const oneshot = struct {
+        pub fn send(usr_data: u64, fd: Sock.Client, buf: []const u8) T {
+            return .{
+                .op = .{ .send = .{ .fd = fd, .buf = buf } },
+                .shot = .one,
+                .usr_data = usr_data,
+            };
+        }
+    };
 
-    pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
-        return .{
-            .recv = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
-        };
-    }
+    pub const multishot = struct {
+        pub fn accept(usr_data: u64, fd: Sock.Server) T {
+            return .{
+                .op = .{ .accept = .{ .fd = fd } },
+                .shot = .multi,
+                .usr_data = usr_data,
+            };
+        }
 
-    pub fn send(usr_data: u64, fd: Sock.Client, buf: []const u8) T {
-        return .{
-            .send = .{ .usr_data = usr_data, .fd = fd, .buf = buf },
-        };
-    }
+        pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
+            return .{
+                .op = .{ .recv = .{ .fd = fd, .buf = buf } },
+                .shot = .multi,
+                .usr_data = usr_data,
+            };
+        }
+    };
 };
 
 //const DebugLog = struct {

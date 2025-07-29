@@ -3,6 +3,7 @@ const BoundedArray = std.BoundedArray;
 const debug = std.debug;
 const mem = std.mem;
 
+const msg = @import("./msg.zig");
 const util = @import("./util.zig");
 
 const config = struct {
@@ -13,7 +14,6 @@ const config = struct {
 /// node is running
 pub fn StateMachine(
     comptime FD: type,
-    comptime OSRequest: type,
     comptime limits: struct { max_clients: usize, write_buf_size: usize },
 ) type {
     comptime {
@@ -21,17 +21,19 @@ pub fn StateMachine(
         debug.assert(256 > limits.max_clients);
     }
 
+    const os = msg.os(FD);
+
     return struct {
         const ClientSockets = util.SlotMap(
-            Socket(FD).Client,
-            Socket(FD).client_eql,
+            os.Socket.Client,
+            os.Socket.client_eql,
             limits.max_clients,
             .{ .duplicates = false },
         );
 
         client_sockets: ClientSockets,
         recv_buf: []u8,
-        os_req_buf: BoundedArray(OSRequest.T, config.max_io_req),
+        os_req_buf: BoundedArray(msg.os.Request(FD), config.max_io_req),
 
         pub fn init(allocator: mem.Allocator) !@This() {
             return .{
@@ -39,7 +41,7 @@ pub fn StateMachine(
                 // TODO: one of these per client? they can be overwritten
                 .recv_buf = try allocator.alloc(u8, limits.write_buf_size),
                 .os_req_buf = try BoundedArray(
-                    OSRequest.T,
+                    os.Request(FD),
                     config.max_io_req,
                 ).init(0),
             };
@@ -50,25 +52,6 @@ pub fn StateMachine(
             allocator.free(self.recv_buf);
         }
 
-        /// OS requests that need to be submitted before the main loop runs.
-        // Note: It is tempting to put this in init
-        // However then we either need to return two things from init, OR this
-        // struct needs to become aware of where to send requests.
-        pub fn initial_transition(
-            self: *@This(),
-            server_fd: Socket(FD).Server,
-        ) ![]const OSRequest.T {
-            // Unlimited accepts!
-            {
-                const req = OSRequest.multishot.accept(
-                    @bitCast(UsrData{ .op = .accept_client_conn }),
-                    server_fd,
-                );
-                try self.os_req_buf.append(req);
-            }
-            return self.os_req_buf.constSlice();
-        }
-
         /// State Machine Transition Function
         /// After the OS respondes with information about an action that's been
         /// completed, the state machines calculates what to request from the
@@ -77,15 +60,14 @@ pub fn StateMachine(
         /// function is called.
         pub fn transition(
             self: *@This(),
-            response: OSResponse(FD),
-        ) ![]const OSRequest.T {
+            response: os.Response
+        ) ![]const os.Request {
             self.os_req_buf.clear();
-            var res_ud: UsrData = @bitCast(response.usr_data);
 
             switch (res_ud.op) {
                 .accept_client_conn => {
                     debug.print("accept client conn\n", .{});
-                    const fd: Socket(FD).Client = @enumFromInt(response.rc);
+                    const fd: os.Socket.Client = @enumFromInt(response.rc);
 
                     if (self.client_sockets.add(fd)) |client_id| {
                         try self.enqueue_os_send_req(
@@ -118,7 +100,10 @@ pub fn StateMachine(
                         self.client_sockets.get(res_ud.client_id).?,
                         self.recv_buf,
                     );
-                    try self.os_req_buf.append(os_req);
+
+                    try self.os_req_buf.append(.{
+                        .
+                    });
                 },
                 .send_no_new_conn => {
                     @panic("TODO: handle this case");
@@ -157,48 +142,4 @@ pub fn StateMachine(
     };
 }
 
-pub fn Socket(comptime FD: type) type {
-    return struct {
-        pub const Client = enum(FD) { _ };
-        pub const Server = enum(FD) { _ };
 
-        pub fn client_eql(a: Client, b: Client) bool {
-            return std.meta.eql(a, b);
-        }
-    };
-}
-
-pub fn OSResponse(comptime FD: type) type {
-    return struct { rc: FD, usr_data: u64 };
-}
-
-/// Data passed to async io systems
-/// Sized at 64 bits to match io_urings user_data, and I think kqueue's udata
-/// Can't  be a tagged union; zig can't bitcast those
-const UsrData = packed struct(u64) {
-    op: enum(u8) {
-        accept_client_conn,
-        send_conn_ack,
-        send_no_new_conn,
-        recv,
-    },
-    /// DB level operation
-    verb: enum(u8) { create, append, delete } = undefined,
-    client_id: u8 = undefined,
-    _padding: u40 = 0,
-
-    fn to_u64(self: UsrData) u64 {
-        return @bitCast(self);
-    }
-
-    fn from_u64(n: u64) UsrData {
-        return @bitCast(n);
-    }
-};
-
-comptime {
-    // IO Uring user_data
-    debug.assert(@sizeOf(u64) == @sizeOf(UsrData));
-    // Kqueue udata
-    debug.assert(@sizeOf(usize) == @sizeOf(UsrData));
-}

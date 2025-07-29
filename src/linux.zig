@@ -42,6 +42,23 @@ pub const AsyncIO = struct {
         const backlog = 128;
         try posix.listen(fd, backlog);
 
+
+
+            // Unlimited accepts!
+            {
+                const req = Req.multishot.accept(
+                    @bitCast(UsrData{ .op = .accept_client_conn }),
+                    server_fd,
+                );
+                try self.os_req_buf.append(req);
+            }
+            // Unlimited receives!
+            {
+                try self.os_req_buf.append(
+                    OSRequest.oneshot.provide_buffers(self.recv_buf),
+                );
+            }
+
         return .{ .ring = ring, .server_fd = @enumFromInt(fd) };
     }
 
@@ -83,10 +100,10 @@ pub const Req = struct {
             return sqe;
         }
 
-        pub fn provide_buffers() T {
+        pub fn provide_buffers(recv_buf: []u8) T {
             var sqe = mem.zeroes(T);
+            sqe.prep_provide_buffers(recv_buf.ptr, recv_buf.len, 1, 0, 0);
             return sqe;
-
         }
     };
 
@@ -97,9 +114,13 @@ pub const Req = struct {
             sqe.user_data = usr_data;
             return sqe;
         }
+
         pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
             var sqe = mem.zeroes(T);
             sqe.prep_recv_multishot(@intFromEnum(fd), buf, 0);
+            sqe.ioprio |= linux.IORING_RECV_MULTISHOT;
+            sqe.flags |= linux.IOSQE_BUFFER_SELECT;
+            sqe.buf_index = 0; // group id
             sqe.user_data = usr_data;
             return sqe;
         }

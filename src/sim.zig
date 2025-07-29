@@ -171,6 +171,11 @@ pub const Req = struct {
                 .usr_data = usr_data,
             };
         }
+
+        pub fn provide_buffers(recv_buf: []u8) T {
+            _ = recv_buf;
+            @panic("TODO!");
+        }
     };
 
     pub const multishot = struct {

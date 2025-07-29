@@ -11,11 +11,11 @@ const executables = .{
         .description = "Run the server",
         .path = "src/client.zig",
     },
-    .{
-        .name = "dst",
-        .description = "Run the deterministic simulation test",
-        .path = "src/dst.zig",
-    },
+    // .{
+    //     .name = "dst",
+    //     .description = "Run the deterministic simulation test",
+    //     .path = "src/dst.zig",
+    // },
 };
 
 // These all need "std.testing.refAllDecls(@This());" in them

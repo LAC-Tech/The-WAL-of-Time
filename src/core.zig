@@ -1,6 +1,14 @@
-//const std = @import("std");
+const std = @import("std");
+const debug = std.debug;
+
+// TODO: remove. stupid thing because zig won't test unless dst uses val
+pub const x: i32 = 0;
+
+test "sanity check" {
+    debug.assert(1 == 2);
+}
+
 //const BoundedArray = std.BoundedArray;
-//const debug = std.debug;
 //const mem = std.mem;
 //
 //const msg = @import("./msg.zig");

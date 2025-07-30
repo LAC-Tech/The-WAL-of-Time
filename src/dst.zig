@@ -39,7 +39,7 @@ pub fn main() !void {
     //    debug.assert(try aio.send(reqs) == reqs.len);
     //}
 
-    const limits: core.Limits = .{ .max_client_conns = 2 };
+    const limits: core.Limits = .{ .max_client_conns = 2, .max_io_reqs = 2 };
 
     debug.print("{any}", .{limits});
 }

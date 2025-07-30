@@ -1,16 +1,33 @@
 const std = @import("std");
+const BoundedArray = std.BoundedArray;
 const debug = std.debug;
 const mem = std.mem;
+const Random = std.Random;
 const testing = std.testing;
 
-pub const Limits = struct { max_client_conns: u8 };
+pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
 test "gracefully handles the maximum number of client connections being reached" {
-    const os = msg.os(std.posix.fd_t);
-    var sm = StateMachine(.{.max_client_conns = 0}).init();
-    sm.transition
-    //testing.e
-    
+    var rng = Random.DefaultPrng.init(testing.random_seed);
+    const FD = u32;
+    const os = msg.os(FD);
+    const limits: Limits = .{
+        .max_client_conns = rng.random().int(u8),
+        .max_io_reqs = 1,
+    };
+    var sm = try StateMachine(FD, limits).init();
+
+    for (0..limits.max_client_conns) |_| {
+        const actual_reqs = try sm.transition(
+            .{ .rc = testing.random_seed, .req = .accept_client_conn },
+        );
+
+        try testing.expectEqualSlices(
+            os.Req,
+            &.{.{ .send_conn_refused = .max_clients }},
+            actual_reqs,
+        );
+    }
 }
 
 ///// Deterministic, in-memory state machine that keeps track of things while the
@@ -19,8 +36,15 @@ pub fn StateMachine(comptime FD: type, comptime limits: Limits) type {
     const os = msg.os(FD);
 
     return struct {
-        fn init() @This() {
-            return .{};
+        os_req_buf: BoundedArray(os.Req, limits.max_io_reqs),
+
+        fn init() !@This() {
+            return .{
+                .os_req_buf = try BoundedArray(
+                    os.Req,
+                    limits.max_io_reqs,
+                ).init(0),
+            };
         }
 
         /// State Machine Transition Function
@@ -29,10 +53,18 @@ pub fn StateMachine(comptime FD: type, comptime limits: Limits) type {
         /// OS.
         /// Note: the return value is only valid until the next time the
         /// function is called.
-        fn transition(self: *@This(), response: os.Response,) ![]const os.Request {
-            _ = self;
-            _ = response;
-            @panic("TODO");
+        fn transition(self: *@This(), res: os.Res) ![]const os.Req {
+            self.os_req_buf.clear();
+            switch (res.req) {
+                .accept_client_conn => {
+                    try self.os_req_buf.append(
+                        .{ .send_conn_refused = .max_clients },
+                    );
+                },
+                else => @panic("TODO"),
+            }
+
+            return self.os_req_buf.constSlice();
         }
     };
 }
@@ -49,10 +81,12 @@ const msg = struct {
                 }
             };
 
-            // High level
-            const Req = union(enum) {};
+            const Req = union(enum) {
+                accept_client_conn,
+                send_conn_refused: enum { max_clients },
+            };
 
-            pub const Response = struct { rc: FD };
+            pub const Res = struct { rc: FD, req: Req };
         };
     }
 };

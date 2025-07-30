@@ -39,7 +39,9 @@ pub fn main() !void {
     //    debug.assert(try aio.send(reqs) == reqs.len);
     //}
 
-    debug.print("{d}", .{core.x});
+    const limits: core.Limits = .{ .max_client_conns = 2 };
+
+    debug.print("{any}", .{limits});
 }
 
 fn get_seed() u64 {

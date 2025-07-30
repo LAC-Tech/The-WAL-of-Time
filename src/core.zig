@@ -1,12 +1,61 @@
 const std = @import("std");
 const debug = std.debug;
+const mem = std.mem;
+const testing = std.testing;
 
-// TODO: remove. stupid thing because zig won't test unless dst uses val
-pub const x: i32 = 0;
+pub const Limits = struct { max_client_conns: u8 };
 
-test "sanity check" {
-    debug.assert(1 == 2);
+test "gracefully handles the maximum number of client connections being reached" {
+    const os = msg.os(std.posix.fd_t);
+    var sm = StateMachine(.{.max_client_conns = 0}).init();
+    sm.transition
+    //testing.e
+    
 }
+
+///// Deterministic, in-memory state machine that keeps track of things while the
+///// node is running
+pub fn StateMachine(comptime FD: type, comptime limits: Limits) type {
+    const os = msg.os(FD);
+
+    return struct {
+        fn init() @This() {
+            return .{};
+        }
+
+        /// State Machine Transition Function
+        /// After the OS respondes with information about an action that's been
+        /// completed, the state machine,fs calculates what to request from the
+        /// OS.
+        /// Note: the return value is only valid until the next time the
+        /// function is called.
+        fn transition(self: *@This(), response: os.Response,) ![]const os.Request {
+            _ = self;
+            _ = response;
+            @panic("TODO");
+        }
+    };
+}
+
+const msg = struct {
+    pub fn os(comptime FD: type) type {
+        return struct {
+            pub const Socket = struct {
+                pub const Client = enum(FD) { _ };
+                pub const Server = enum(FD) { _ };
+
+                pub fn client_eql(a: Client, b: Client) bool {
+                    return std.meta.eql(a, b);
+                }
+            };
+
+            // High level
+            const Req = union(enum) {};
+
+            pub const Response = struct { rc: FD };
+        };
+    }
+};
 
 //const BoundedArray = std.BoundedArray;
 //const mem = std.mem;
@@ -62,7 +111,7 @@ test "sanity check" {
 //
 //        /// State Machine Transition Function
 //        /// After the OS respondes with information about an action that's been
-//        /// completed, the state machines calculates what to request from the
+//        /// completed, the state machine,fs calculates what to request from the
 //        /// OS.
 //        /// Note: the return value is only valid until the next time the
 //        /// function is called.

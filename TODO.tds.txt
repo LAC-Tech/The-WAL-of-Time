@@ -4,3 +4,6 @@ implement create topic logic
 revisit recv multishot
 correct flags for multishot recv, based on provided buffers
 provide buffers one shot
+re-write
+start with core protocol, TDD
+comment out everything but it make it compile w/o errors

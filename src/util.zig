@@ -6,14 +6,14 @@ const math = std.math;
 const meta = std.meta;
 const debug = std.debug;
 
-const Err = error{ Overflow, Duplicate };
+const Slot = u8;
+const AddRes = struct { slot: Slot, existed: bool };
 
 pub fn SlotMap(
     comptime T: type,
     comptime eql: fn (T, T) bool,
     comptime opts: struct { duplicates: bool },
 ) type {
-    const Slot = u8;
     const UInt = u256;
 
     return struct {
@@ -37,12 +37,15 @@ pub fn SlotMap(
             allocator.free(self.vals);
         }
 
-        pub fn add(self: *@This(), val: T) Err!Slot {
+        /// If val already exists, returns Slot, else adds and returns a Slot
+        pub fn add(self: *@This(), val: T) !AddRes {
             if (!opts.duplicates) {
                 var slot: Slot = 0;
                 while (slot < self.max_slots) : (slot += 1) {
                     if (self.is_clear(slot)) continue;
-                    if (eql(self.vals[slot], val)) return error.Duplicate;
+                    if (eql(self.vals[slot], val)) {
+                        return .{ .slot = slot, .existed = true };
+                    }
                 }
             }
 
@@ -50,7 +53,7 @@ pub fn SlotMap(
             if (free_slot >= self.max_slots) return error.Overflow;
             self.set(free_slot);
             self.vals[free_slot] = val;
-            return @intCast(free_slot);
+            return .{ .slot = @intCast(free_slot), .existed = false };
         }
 
         pub fn get(self: @This(), slot: Slot) ?T {
@@ -93,20 +96,20 @@ test "SlotMap" {
     var sm = try SM.init(allocator, 8);
     defer sm.deinit(allocator);
 
-    const slot1 = try sm.add(42);
-    try std.testing.expectEqual(0, slot1);
-    try std.testing.expectEqual(42, sm.get(slot1).?);
-    try std.testing.expectError(error.Duplicate, sm.add(42));
+    const add_res1 = try sm.add(42);
+    try std.testing.expectEqual(AddRes{ .slot = 0, .existed = false }, add_res1);
+    try std.testing.expectEqual(42, sm.get(add_res1.slot).?);
+    try std.testing.expectEqual(AddRes{ .slot = 0, .existed = true }, try sm.add(42));
 
-    const slot2 = try sm.add(99);
-    try std.testing.expectEqual(1, slot2);
-    try std.testing.expectEqual(99, sm.get(slot2).?);
+    const add_res2 = try sm.add(99);
+    try std.testing.expectEqual(AddRes{ .slot = 1, .existed = false }, add_res2);
+    try std.testing.expectEqual(99, sm.get(add_res2.slot).?);
 
-    try std.testing.expectEqual(42, sm.remove(slot1).?);
-    try std.testing.expectEqual(null, sm.get(slot1));
+    try std.testing.expectEqual(42, sm.remove(add_res1.slot).?);
+    try std.testing.expectEqual(null, sm.get(add_res1.slot));
 
-    try std.testing.expectEqual(99, sm.remove(slot2).?);
-    try std.testing.expectEqual(null, sm.get(slot2));
+    try std.testing.expectEqual(99, sm.remove(add_res2.slot).?);
+    try std.testing.expectEqual(null, sm.get(add_res2.slot));
 
     var i: u8 = 0;
     while (i < 8) : (i += 1) {

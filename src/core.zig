@@ -2,7 +2,9 @@ const std = @import("std");
 const ArrayList = std.ArrayListUnmanaged;
 const debug = std.debug;
 const Rng = std.Random.DefaultPrng;
+const math = std.math;
 const mem = std.mem;
+const meta = std.meta;
 const Random = std.Random;
 const testing = std.testing;
 
@@ -12,7 +14,7 @@ pub const ClientID = u8;
 pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
 test "gracefully handles the maximum number of client connections being reached" {
-    const FD = u16;
+    const FD = u8; // small int to trigger duplicates
     const os = msg.os(FD);
 
     var rng = Rng.init(testing.random_seed);
@@ -25,30 +27,35 @@ test "gracefully handles the maximum number of client connections being reached"
     var sm = try StateMachine(FD).init(testing.allocator, limits);
     defer sm.deinit(testing.allocator);
 
-    for (0..limits.max_client_conns) |i| {
-        // TODO: this test should break, because eventually this will be
-        // duplicate
-        const fd = rng.random().int(FD);
-        const actual_reqs = try sm.transition(
-            .{ .rc = fd, .req = .accept_client_conn },
-        );
+    var conns_made: usize = 0;
 
-        const expected_client_id: ClientID = @intCast(i);
+    while (limits.max_client_conns > conns_made) {
+        const actual_reqs = try sm.transition(.{
+            .rc = rng.random().intRangeLessThan(FD, 0, math.maxInt(FD)),
+            .req = .accept_client_conn,
+        });
 
-        try testing.expectEqualSlices(
-            os.Req,
-            &.{.{ .send_conn_ack = expected_client_id }},
-            actual_reqs,
-        );
+        try testing.expectEqual(actual_reqs.len, 1);
+        const actual: meta.Tag(os.Req) = meta.activeTag(actual_reqs[0]);
+
+        switch (actual) {
+            .send_conn_ack => {
+                conns_made += 1;
+            },
+            .send_conn_reused => {},
+            else => {
+                @panic("failed to make a connection");
+            },
+        }
     }
 
     const actual_reqs = try sm.transition(
-        .{ .rc = rng.random().int(FD), .req = .accept_client_conn },
+        .{ .rc = math.maxInt(FD), .req = .accept_client_conn },
     );
 
     try testing.expectEqualSlices(
         os.Req,
-        &.{.{ .send_conn_refused = .max_clients }},
+        &.{.{ .send_conn_rejected = .max_clients }},
         actual_reqs,
     );
 }
@@ -98,17 +105,18 @@ pub fn StateMachine(comptime FD: type) type {
                 .accept_client_conn => {
                     const fd: os.Socket.Client = @enumFromInt(res.rc);
 
-                    if (self.client_sockets.add(fd)) |client_id| {
-                        self.os_req_buf.appendAssumeCapacity(
-                            .{ .send_conn_ack = client_id },
-                        );
+                    if (self.client_sockets.add(fd)) |add_res| {
+                        const client_id = add_res.slot;
+                        const os_req: os.Req = if (add_res.existed)
+                            .{ .send_conn_reused = client_id }
+                        else
+                            .{ .send_conn_ack = client_id };
+
+                        self.enqueue_os_req(os_req);
                     } else |err| switch (err) {
-                        error.Duplicate => {
-                            @panic("somehow need to get duplicate and handle");
-                        },
                         error.Overflow => {
-                            self.os_req_buf.appendAssumeCapacity(
-                                .{ .send_conn_refused = .max_clients },
+                            self.enqueue_os_req(
+                                .{ .send_conn_rejected = .max_clients },
                             );
                         },
                     }
@@ -118,6 +126,10 @@ pub fn StateMachine(comptime FD: type) type {
             }
 
             return self.os_req_buf.items;
+        }
+
+        fn enqueue_os_req(self: *@This(), req: os.Req) void {
+            self.os_req_buf.appendAssumeCapacity(req);
         }
     };
 }
@@ -137,12 +149,12 @@ const msg = struct {
             const Req = union(enum) {
                 /// Recurring request that accepts incoming client connection
                 accept_client_conn,
-                /// A new a connection has been created OR a connection already
-                /// existed.
-                // TODO: distinquish between those cases?
+                /// A new a connection has been created
                 send_conn_ack: ClientID,
-                /// State machine refuses a new connection
-                send_conn_refused: enum { max_clients },
+                /// A connection already existed and we're re-using it
+                send_conn_reused: ClientID,
+                /// The client is unable to connect
+                send_conn_rejected: enum { max_clients },
             };
 
             pub const Res = struct { rc: FD, req: Req };

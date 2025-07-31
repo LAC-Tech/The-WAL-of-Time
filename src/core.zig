@@ -13,7 +13,7 @@ const util = @import("util.zig");
 pub const ClientID = u8;
 pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
-test "gracefully handles the maximum number of client connections being reached" {
+test "gracefully handles the max number of client connections being reached" {
     const FD = u8; // small int to trigger duplicates
     const os = msg.os(FD);
 
@@ -28,9 +28,9 @@ test "gracefully handles the maximum number of client connections being reached"
     defer sm.deinit(testing.allocator);
 
     var conns_made: usize = 0;
-
     while (limits.max_client_conns > conns_made) {
         const actual_reqs = try sm.transition(.{
+            // This allows maxInt to used for an FD that won't be there
             .rc = rng.random().intRangeLessThan(FD, 0, math.maxInt(FD)),
             .req = .accept_client_conn,
         });

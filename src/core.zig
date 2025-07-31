@@ -1,6 +1,7 @@
 const std = @import("std");
-const BoundedArray = std.BoundedArray;
+const ArrayList = std.ArrayListUnmanaged;
 const debug = std.debug;
+const Rng = std.Random.DefaultPrng;
 const mem = std.mem;
 const Random = std.Random;
 const testing = std.testing;
@@ -8,43 +9,45 @@ const testing = std.testing;
 pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
 test "gracefully handles the maximum number of client connections being reached" {
-    var rng = Random.DefaultPrng.init(testing.random_seed);
     const FD = u32;
     const os = msg.os(FD);
-    const limits: Limits = .{
-        .max_client_conns = rng.random().int(u8),
+    var sm = try StateMachine(FD).init(testing.allocator, .{
+        .max_client_conns = 0,
         .max_io_reqs = 1,
-    };
-    var sm = try StateMachine(FD, limits).init();
+    });
+    defer sm.deinit(testing.allocator);
 
-    for (0..limits.max_client_conns) |_| {
-        const actual_reqs = try sm.transition(
-            .{ .rc = testing.random_seed, .req = .accept_client_conn },
-        );
+    const actual_reqs = try sm.transition(
+        .{ .rc = testing.random_seed, .req = .accept_client_conn },
+    );
 
-        try testing.expectEqualSlices(
-            os.Req,
-            &.{.{ .send_conn_refused = .max_clients }},
-            actual_reqs,
-        );
-    }
+    try testing.expectEqualSlices(
+        os.Req,
+        &.{.{ .send_conn_refused = .max_clients }},
+        actual_reqs,
+    );
 }
 
-///// Deterministic, in-memory state machine that keeps track of things while the
-///// node is running
-pub fn StateMachine(comptime FD: type, comptime limits: Limits) type {
+/// Deterministic, in-memory state machine that keeps track of things while the
+/// node is running.
+pub fn StateMachine(comptime FD: type) type {
     const os = msg.os(FD);
 
     return struct {
-        os_req_buf: BoundedArray(os.Req, limits.max_io_reqs),
+        os_req_buf: ArrayList(os.Req),
 
-        fn init() !@This() {
+        // Having limits be a run time parameter lets us load them from config
+        // It also let's use randomly genearate limits in tests
+        fn init(allocator: mem.Allocator, limits: Limits) !@This() {
             return .{
-                .os_req_buf = try BoundedArray(
-                    os.Req,
-                    limits.max_io_reqs,
-                ).init(0),
+                .os_req_buf = ArrayList(os.Req).fromOwnedSlice(
+                    try allocator.alloc(os.Req, limits.max_io_reqs),
+                ),
             };
+        }
+
+        fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            self.os_req_buf.deinit(allocator);
         }
 
         /// State Machine Transition Function
@@ -54,17 +57,17 @@ pub fn StateMachine(comptime FD: type, comptime limits: Limits) type {
         /// Note: the return value is only valid until the next time the
         /// function is called.
         fn transition(self: *@This(), res: os.Res) ![]const os.Req {
-            self.os_req_buf.clear();
+            self.os_req_buf.clearRetainingCapacity();
             switch (res.req) {
                 .accept_client_conn => {
-                    try self.os_req_buf.append(
+                    self.os_req_buf.appendAssumeCapacity(
                         .{ .send_conn_refused = .max_clients },
                     );
                 },
                 else => @panic("TODO"),
             }
 
-            return self.os_req_buf.constSlice();
+            return self.os_req_buf.items;
         }
     };
 }

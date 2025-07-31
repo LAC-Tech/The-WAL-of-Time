@@ -11,6 +11,8 @@ const testing = std.testing;
 const util = @import("util.zig");
 
 pub const ClientID = u8;
+pub const TopicID = u8;
+
 pub const Limits = struct {
     max_client_conns: u8,
     // TODO: this can be worked out statically?
@@ -150,6 +152,8 @@ const msg = struct {
                 }
             };
 
+            pub const File = enum(FD) { _ };
+
             const Req = union(enum) {
                 /// Recurring request that accepts incoming client connection
                 accept_client_conn,
@@ -159,6 +163,10 @@ const msg = struct {
                 send_conn_reused: ClientID,
                 /// The client is unable to connect
                 send_conn_rejected: enum { max_clients },
+                recv_topic_create: []const u8,
+                send_topic_created: TopicID,
+                recv_topic_delete: TopicID,
+                send_topic_delete: TopicID,
             };
 
             pub const Res = struct { rc: FD, req: Req };

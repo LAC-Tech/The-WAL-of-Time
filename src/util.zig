@@ -11,28 +11,25 @@ const Err = error{ Overflow, Duplicate };
 pub fn SlotMap(
     comptime T: type,
     comptime eql: fn (T, T) bool,
-    comptime max_slots: u8,
     comptime opts: struct { duplicates: bool },
 ) type {
     const Slot = u8;
-
-    comptime {
-        debug.assert(math.maxInt(Slot) >= max_slots - 1);
-    }
-
-    const UInt = meta.Int(.unsigned, @intCast(max_slots));
+    const UInt = u256;
 
     return struct {
         vals: []T,
         used_slots: UInt,
+        max_slots: u8,
 
-        pub fn init(allocator: mem.Allocator) !@This() {
+        pub fn init(allocator: mem.Allocator, max_slots: u8) !@This() {
+            debug.assert(math.maxInt(Slot) >= max_slots - 1);
             const vals = try allocator.alloc(T, @intCast(max_slots));
             @memset(vals, undefined);
 
             return .{
                 .vals = vals,
                 .used_slots = 0,
+                .max_slots = max_slots,
             };
         }
 
@@ -43,14 +40,14 @@ pub fn SlotMap(
         pub fn add(self: *@This(), val: T) Err!Slot {
             if (!opts.duplicates) {
                 var slot: Slot = 0;
-                while (slot < max_slots) : (slot += 1) {
+                while (slot < self.max_slots) : (slot += 1) {
                     if (self.is_clear(slot)) continue;
                     if (eql(self.vals[slot], val)) return error.Duplicate;
                 }
             }
 
-            const free_slot = @ctz(~self.used_slots);
-            if (free_slot >= max_slots) return error.Overflow;
+            const free_slot: Slot = @intCast(@ctz(~self.used_slots));
+            if (free_slot >= self.max_slots) return error.Overflow;
             self.set(free_slot);
             self.vals[free_slot] = val;
             return @intCast(free_slot);
@@ -92,8 +89,8 @@ fn u32_eql(a: u32, b: u32) bool {
 
 test "SlotMap" {
     const allocator = std.testing.allocator;
-    const SM = SlotMap(u32, u32_eql, 8, .{ .duplicates = false });
-    var sm = try SM.init(allocator);
+    const SM = SlotMap(u32, u32_eql, .{ .duplicates = false });
+    var sm = try SM.init(allocator, 8);
     defer sm.deinit(allocator);
 
     const slot1 = try sm.add(42);

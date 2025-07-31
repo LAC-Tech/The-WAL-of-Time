@@ -6,11 +6,13 @@ const mem = std.mem;
 const Random = std.Random;
 const testing = std.testing;
 
+const util = @import("util.zig");
+
 pub const ClientID = u8;
 pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
 test "gracefully handles the maximum number of client connections being reached" {
-    const FD = u32;
+    const FD = u16;
     const os = msg.os(FD);
 
     var rng = Rng.init(testing.random_seed);
@@ -41,7 +43,7 @@ test "gracefully handles the maximum number of client connections being reached"
     }
 
     const actual_reqs = try sm.transition(
-        .{ .rc = testing.random_seed, .req = .accept_client_conn },
+        .{ .rc = rng.random().int(FD), .req = .accept_client_conn },
     );
 
     try testing.expectEqualSlices(
@@ -55,9 +57,15 @@ test "gracefully handles the maximum number of client connections being reached"
 /// node is running.
 pub fn StateMachine(comptime FD: type) type {
     const os = msg.os(FD);
+    const ClientIDs = util.SlotMap(
+        os.Socket.Client,
+        os.Socket.client_eql,
+        .{ .duplicates = false },
+    );
 
     return struct {
         os_req_buf: ArrayList(os.Req),
+        client_sockets: ClientIDs,
 
         // Having limits be a run time parameter lets us load them from config
         // It also let's use randomly genearate limits in tests
@@ -66,11 +74,16 @@ pub fn StateMachine(comptime FD: type) type {
                 .os_req_buf = ArrayList(os.Req).fromOwnedSlice(
                     try allocator.alloc(os.Req, limits.max_io_reqs),
                 ),
+                .client_sockets = try ClientIDs.init(
+                    allocator,
+                    limits.max_client_conns,
+                ),
             };
         }
 
         fn deinit(self: *@This(), allocator: mem.Allocator) void {
             self.os_req_buf.deinit(allocator);
+            self.client_sockets.deinit(allocator);
         }
 
         /// State Machine Transition Function
@@ -83,10 +96,24 @@ pub fn StateMachine(comptime FD: type) type {
             self.os_req_buf.clearRetainingCapacity();
             switch (res.req) {
                 .accept_client_conn => {
-                    self.os_req_buf.appendAssumeCapacity(
-                        .{ .send_conn_refused = .max_clients },
-                    );
+                    const fd: os.Socket.Client = @enumFromInt(res.rc);
+
+                    if (self.client_sockets.add(fd)) |client_id| {
+                        self.os_req_buf.appendAssumeCapacity(
+                            .{ .send_conn_ack = client_id },
+                        );
+                    } else |err| switch (err) {
+                        error.Duplicate => {
+                            @panic("somehow need to get duplicate and handle");
+                        },
+                        error.Overflow => {
+                            self.os_req_buf.appendAssumeCapacity(
+                                .{ .send_conn_refused = .max_clients },
+                            );
+                        },
+                    }
                 },
+
                 else => @panic("TODO"),
             }
 

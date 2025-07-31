@@ -24,6 +24,8 @@ test "gracefully handles the maximum number of client connections being reached"
     defer sm.deinit(testing.allocator);
 
     for (0..limits.max_client_conns) |i| {
+        // TODO: this test should break, because eventually this will be
+        // duplicate
         const fd = rng.random().int(FD);
         const actual_reqs = try sm.transition(
             .{ .rc = fd, .req = .accept_client_conn },

@@ -6,16 +6,37 @@ const mem = std.mem;
 const Random = std.Random;
 const testing = std.testing;
 
+pub const ClientID = u8;
 pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
 
 test "gracefully handles the maximum number of client connections being reached" {
     const FD = u32;
     const os = msg.os(FD);
-    var sm = try StateMachine(FD).init(testing.allocator, .{
-        .max_client_conns = 0,
+
+    var rng = Rng.init(testing.random_seed);
+
+    const limits = Limits{
+        .max_client_conns = rng.random().int(u8),
         .max_io_reqs = 1,
-    });
+    };
+
+    var sm = try StateMachine(FD).init(testing.allocator, limits);
     defer sm.deinit(testing.allocator);
+
+    for (0..limits.max_client_conns) |i| {
+        const fd = rng.random().int(FD);
+        const actual_reqs = try sm.transition(
+            .{ .rc = fd, .req = .accept_client_conn },
+        );
+
+        const expected_client_id: ClientID = @intCast(i);
+
+        try testing.expectEqualSlices(
+            os.Req,
+            &.{.{ .send_conn_ack = expected_client_id }},
+            actual_reqs,
+        );
+    }
 
     const actual_reqs = try sm.transition(
         .{ .rc = testing.random_seed, .req = .accept_client_conn },
@@ -85,7 +106,13 @@ const msg = struct {
             };
 
             const Req = union(enum) {
+                /// Recurring request that accepts incoming client connection
                 accept_client_conn,
+                /// A new a connection has been created OR a connection already
+                /// existed.
+                // TODO: distinquish between those cases?
+                send_conn_ack: ClientID,
+                /// State machine refuses a new connection
                 send_conn_refused: enum { max_clients },
             };
 

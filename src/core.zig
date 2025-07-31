@@ -11,7 +11,11 @@ const testing = std.testing;
 const util = @import("util.zig");
 
 pub const ClientID = u8;
-pub const Limits = struct { max_client_conns: u8, max_io_reqs: u8 };
+pub const Limits = struct {
+    max_client_conns: u8,
+    // TODO: this can be worked out statically?
+    max_io_reqs: u8,
+};
 
 test "gracefully handles the max number of client connections being reached" {
     const FD = u8; // small int to trigger duplicates
@@ -39,13 +43,11 @@ test "gracefully handles the max number of client connections being reached" {
         const actual: meta.Tag(os.Req) = meta.activeTag(actual_reqs[0]);
 
         switch (actual) {
+            .send_conn_reused => {},
             .send_conn_ack => {
                 conns_made += 1;
             },
-            .send_conn_reused => {},
-            else => {
-                @panic("failed to make a connection");
-            },
+            else => @panic("failed to make a connection"),
         }
     }
 
@@ -128,6 +130,8 @@ pub fn StateMachine(comptime FD: type) type {
             return self.os_req_buf.items;
         }
 
+        // TODO: use this to translate to OS specific stuff on the fly?
+        // ie io_uring_sqe
         fn enqueue_os_req(self: *@This(), req: os.Req) void {
             self.os_req_buf.appendAssumeCapacity(req);
         }

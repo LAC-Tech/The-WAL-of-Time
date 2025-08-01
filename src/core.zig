@@ -14,6 +14,8 @@ pub const ClientID = u8;
 pub const TopicID = u8;
 
 pub const Limits = struct {
+    // TODO: can we just say "this is 256"?
+    // the diff between 1 and 256 is less than 1kb, given 32 bit fds
     max_client_conns: u8,
     // TODO: this can be worked out statically?
     max_io_reqs: u8,

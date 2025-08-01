@@ -24,7 +24,6 @@ pub fn SlotMap(
         pub fn init(allocator: mem.Allocator, max_slots: u8) !@This() {
             debug.assert(math.maxInt(Slot) >= max_slots - 1);
             const vals = try allocator.alloc(T, @intCast(max_slots));
-            @memset(vals, undefined);
 
             return .{
                 .vals = vals,

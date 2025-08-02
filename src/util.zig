@@ -1,25 +1,27 @@
 //! Data structures
 
 const std = @import("std");
+const debug = std.debug;
 const mem = std.mem;
 const math = std.math;
 const meta = std.meta;
-const debug = std.debug;
-
-const Slot = u8;
-const AddRes = struct { slot: Slot, existed: bool };
+const testing = std.testing;
 
 pub fn SlotMap(
     comptime T: type,
     comptime eql: fn (T, T) bool,
     comptime opts: struct { duplicates: bool },
 ) type {
-    const UInt = u256;
+    const max_n_slots = 256;
+    const UInt = meta.Int(.unsigned, max_n_slots);
+    const Slot = meta.Int(.unsigned, math.log2(max_n_slots));
 
     return struct {
+        const AddRes = struct { slot: Slot, existed: bool };
+
         vals: []T,
         used_slots: UInt,
-        max_slots: u8,
+        max_slots: Slot,
 
         pub fn init(allocator: mem.Allocator, max_slots: u8) !@This() {
             debug.assert(math.maxInt(Slot) >= max_slots - 1);
@@ -96,25 +98,28 @@ test "SlotMap" {
     defer sm.deinit(allocator);
 
     const add_res1 = try sm.add(42);
-    try std.testing.expectEqual(AddRes{ .slot = 0, .existed = false }, add_res1);
-    try std.testing.expectEqual(42, sm.get(add_res1.slot).?);
-    try std.testing.expectEqual(AddRes{ .slot = 0, .existed = true }, try sm.add(42));
+    try testing.expectEqual(SM.AddRes{ .slot = 0, .existed = false }, add_res1);
+    try testing.expectEqual(42, sm.get(add_res1.slot).?);
+    try testing.expectEqual(
+        SM.AddRes{ .slot = 0, .existed = true },
+        try sm.add(42),
+    );
 
     const add_res2 = try sm.add(99);
-    try std.testing.expectEqual(AddRes{ .slot = 1, .existed = false }, add_res2);
-    try std.testing.expectEqual(99, sm.get(add_res2.slot).?);
+    try testing.expectEqual(SM.AddRes{ .slot = 1, .existed = false }, add_res2);
+    try testing.expectEqual(99, sm.get(add_res2.slot).?);
 
-    try std.testing.expectEqual(42, sm.remove(add_res1.slot).?);
-    try std.testing.expectEqual(null, sm.get(add_res1.slot));
+    try testing.expectEqual(42, sm.remove(add_res1.slot).?);
+    try testing.expectEqual(null, sm.get(add_res1.slot));
 
-    try std.testing.expectEqual(99, sm.remove(add_res2.slot).?);
-    try std.testing.expectEqual(null, sm.get(add_res2.slot));
+    try testing.expectEqual(99, sm.remove(add_res2.slot).?);
+    try testing.expectEqual(null, sm.get(add_res2.slot));
 
     var i: u8 = 0;
     while (i < 8) : (i += 1) {
         _ = try sm.add(i);
     }
-    try std.testing.expectError(error.Overflow, sm.add(100));
+    try testing.expectError(error.Overflow, sm.add(100));
 }
 
 pub fn RingBuf(comptime T: type, comptime capacity: usize) type {

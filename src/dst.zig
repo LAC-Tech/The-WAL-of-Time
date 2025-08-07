@@ -38,10 +38,8 @@ pub fn main() !void {
     //    const reqs = try sm.transition(res);
     //    debug.assert(try aio.send(reqs) == reqs.len);
     //}
-
-    const limits: core.Limits = .{ .max_client_conns = 2, .max_io_reqs = 2 };
-
-    debug.print("{any}", .{limits});
+    const sm = try core.StateMachine.init();
+    debug.print("{any}", .{sm});
 }
 
 fn get_seed() u64 {

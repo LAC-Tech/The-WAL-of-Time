@@ -4,12 +4,3 @@ implement create topic logic
 revisit recv multishot
 correct flags for multishot recv, based on provided buffers
 provide buffers one shot
-re-write
-slot map for topics
-2**8 or 2**16 max topics
-2**16 * 4 bytes of stack memory OK?
-make sure tests currently pass
-fix max clients at 256, max topics at 2**16
-then de-parameterise core
-comptie assert that all OS fds are 32 bits
-re-write slotmap so that it can be generic for u8 or 16 slots

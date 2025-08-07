@@ -1,36 +1,60 @@
-//! Information used for communicating with the underlying operating system
+//! Data that's in common between the state machine and OS
 
 const std = @import("std");
 
-pub fn os(comptime FD: type) type {
-    return struct {
-        pub const Socket = struct {
-            pub const Client = enum(FD) { _ };
-            pub const Server = enum(FD) { _ };
-
-            pub fn client_eql(a: Client, b: Client) bool {
-                return std.meta.eql(a, b);
-            }
-        };
-
-        pub const Response = struct { rc: FD, usr_data: UsrData };
-
-        pub const Request = struct {
-            op: union(enum) {
-                accept: struct { fd: Socket(FD).Server },
-                recv: struct { fd: Socket(FD).Client, buf: []u8 },
-                send: struct { fd: Socket(FD).Client, buf: []const u8 },
-            },
-            shot: enum { multi, one },
-            usr_data: u64,
-        };
-    };
-}
-
-/// Data passed to async io systems
-pub const UsrData = union(enum) {
+const Op = enum {
+    /// Recurring request that accepts incoming client connection
     accept_client_conn,
+    /// A new a connection has been created
     send_conn_ack,
-    send_no_new_conn,
-    recv,
+    /// The client is unable to connect
+    send_conn_rejected,
+
+    //recv_topic_create,
+    //send_topic_created,
+    //recv_topic_delete,
+    //send_topic_delete,
 };
+
+const AcceptErr = error{};
+const SendErr = error{};
+const RecvErr = error{};
+
+// Pretty sure it's this in every 64 bit unix-like system.
+// TODO: figure out if I care about windows
+const FD = i32;
+
+const Socket = struct {
+    pub const Client = enum(FD) { _ };
+    pub const Server = enum(FD) { _ };
+
+    pub fn client_eql(a: Client, b: Client) bool {
+        return std.meta.eql(a, b);
+    }
+};
+
+pub const local_io = struct {
+    // Aka, SQE
+    pub const Req = union(Op) {
+        /// Recurring request that accepts incoming client connection
+        accept_client_conn,
+        /// A new a connection has been created
+        send_conn_ack: ClientID,
+        /// The client is unable to connect
+        send_conn_rejected: AcceptErr,
+
+        //recv_topic_create: []const u8,
+        //send_topic_created: TopicID,
+        //recv_topic_delete: TopicID,
+        //send_topic_delete: TopicID,
+    };
+
+    // Aka, CQE
+    pub const Res = union(Op) {
+        accept_client_conn: AcceptErr!ClientID,
+        send_conn_ack: SendErr!void,
+        send_conn_rejected: SendErr!void,
+    };
+};
+const ClientID = enum(FD) { _ };
+const TopicID = enum(FD) { _ };

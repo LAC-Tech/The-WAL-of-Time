@@ -9,17 +9,17 @@ const config = struct {
 };
 
 pub fn main() !void {
-    const stdout = io.getStdOut().writer();
-    const stdin = io.getStdIn().reader();
-    var input_buf: [config.max_input]u8 = .{0} ** config.max_input;
-
-    while (true) {
-        try stdout.print("> ", .{});
-        const input = try stdin.readUntilDelimiter(&input_buf, '\n');
-
-        if (mem.eql(u8, input, "q")) {
-            break;
-        }
-        try stdout.print("{s}\n", .{input});
-    }
+    //    const stdout = io.getStdOut().writer();
+    //    const stdin = io.getStdIn().reader();
+    //    var input_buf: [config.max_input]u8 = .{0} ** config.max_input;
+    //
+    //    while (true) {
+    //        try stdout.print("> ", .{});
+    //        const input = try stdin.readUntilDelimiter(&input_buf, '\n');
+    //
+    //        if (mem.eql(u8, input, "q")) {
+    //            break;
+    //        }
+    //        try stdout.print("{s}\n", .{input});
+    //    }
 }

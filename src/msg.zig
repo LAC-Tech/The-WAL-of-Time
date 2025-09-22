@@ -9,11 +9,6 @@ const Op = enum {
     send_conn_ack,
     /// The client is unable to connect
     send_conn_rejected,
-
-    //recv_topic_create,
-    //send_topic_created,
-    //recv_topic_delete,
-    //send_topic_delete,
 };
 
 const AcceptErr = error{};
@@ -42,11 +37,6 @@ pub const local_io = struct {
         send_conn_ack: ClientID,
         /// The client is unable to connect
         send_conn_rejected: AcceptErr,
-
-        //recv_topic_create: []const u8,
-        //send_topic_created: TopicID,
-        //recv_topic_delete: TopicID,
-        //send_topic_delete: TopicID,
     };
 
     // Aka, CQE

@@ -23,10 +23,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
 
     inline for (root_test_files) |test_file| {
-        const tests = b.addTest(.{
+        const test_mod = b.addModule("test_mod", .{
             .root_source_file = b.path(test_file),
             .target = target,
             .optimize = optimize,
+        });
+        const tests = b.addTest(.{
+            .root_module = test_mod,
         });
 
         const run_tests = b.addRunArtifact(tests);
@@ -34,12 +37,19 @@ pub fn build(b: *std.Build) void {
     }
 
     inline for (executables) |e| {
-        const exe = b.addExecutable(.{
-            .name = e.name,
+        const exe_mod = b.addModule(e.name, .{
             .root_source_file = b.path(e.path),
             .target = target,
             .optimize = optimize,
         });
+        const exe = b.addExecutable(.{
+            .name = e.name,
+            .root_module = exe_mod,
+        });
+        if (std.mem.eql(u8, "client", e.name)) {
+            exe.linkLibC();
+            exe.linkSystemLibrary("ncurses");
+        }
         b.installArtifact(exe);
 
         const run_cmd = b.addRunArtifact(exe);

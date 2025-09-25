@@ -1,0 +1,11 @@
+(executable
+ (public_name poc)
+ (name main)
+ (libraries poc containers.pvec)
+ (preprocess
+  (pps ppx_deriving.show ppx_deriving.ord)))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))

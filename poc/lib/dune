@@ -1,2 +1,9 @@
 (library
- (name poc))
+ (libraries containers.pvec)
+ (name poc)
+ (modules core))
+
+(env
+ (dev
+  (flags
+   (:standard -warn-error -A))))

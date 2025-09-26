@@ -1,7 +1,7 @@
 (executable
  (public_name poc)
  (name main)
- (libraries poc containers.pvec)
+ (libraries poc)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.ord)))
 

@@ -1,7 +1,6 @@
 (library
  (libraries containers.pvec)
- (name poc)
- (modules core))
+ (name poc))
 
 (env
  (dev

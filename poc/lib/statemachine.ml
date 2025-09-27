@@ -1,11 +1,11 @@
 open Local_io
 open Wp
 
-type t = {
+type 'e t = {
   by_fd : ReplicaID.t FD.Map.t;
   by_rid : FD.t ReplicaID.Map.t;
   vv : VV.t;
-  req_buf : Local_io.req list;
+  req_buf : 'e Local_io.req list;
 }
 
 let empty =

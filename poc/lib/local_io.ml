@@ -11,10 +11,12 @@ end = struct
 end
 
 (* ie, SQE *)
-type req =
-  | Send of Wp.outgoing
-  | Append of { fd : FD.t; events : Bytes.t list }
+type 'event req =
+  | Send of 'event Wp.outgoing
+  | Append of { fd : FD.t; events : 'event list }
   | Read of { fd : FD.t; offset : int }
 
 (* ie, CQE *)
-type res = Write of { fd : FD.t; size : int } | Recv of Wp.incoming
+type 'event res =
+  | Write of { fd : FD.t; size : int }
+  | Recv of 'event Wp.incoming

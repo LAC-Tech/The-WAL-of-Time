@@ -34,8 +34,8 @@ end = struct
   let to_list = ReplicaID.Map.to_list
 end
 
-type incoming =
-  | Append of { rid : ReplicaID.t; events : Bytes.t list }
+type 'event incoming =
+  | Append of { rid : ReplicaID.t; events : 'event list }
   | ClientRead of VV.t
 
-type outgoing = Current of VV.t | RemoteDelta of Bytes.t ReplicaID.Map.t
+type 'event outgoing = Current of VV.t | RemoteDelta of 'event ReplicaID.Map.t

@@ -1,47 +1,43 @@
-type aof = { rid : Wp.ReplicaID.t; fd : Local_io.FD.t; offset : int }
+open Local_io
+open Wp
 
 type t = {
-  by_fd : Wp.ReplicaID.t Local_io.FD.Map.t;
-  by_rid : Local_io.FD.t Wp.ReplicaID.Map.t;
-  vv : Wp.VV.t;
+  by_fd : ReplicaID.t FD.Map.t;
+  by_rid : FD.t ReplicaID.Map.t;
+  vv : VV.t;
   req_buf : Local_io.req list;
 }
 
 let empty =
   {
-    by_fd = Local_io.FD.Map.empty;
-    by_rid = Wp.ReplicaID.Map.empty;
-    vv = Wp.VV.empty;
+    by_fd = FD.Map.empty;
+    by_rid = ReplicaID.Map.empty;
+    vv = VV.empty;
     req_buf = [];
   }
 
-let add { rid; fd; offset } sm =
-  {
-    sm with
-    vv = sm.vv |> Wp.VV.update rid offset;
-    by_fd = sm.by_fd |> Local_io.FD.Map.add fd rid;
-    by_rid = sm.by_rid |> Wp.ReplicaID.Map.add rid fd;
-  }
+let create aofs =
+  let add sm (rid, fd, offset) =
+    {
+      sm with
+      vv = sm.vv |> VV.update rid offset;
+      by_fd = sm.by_fd |> FD.Map.add fd rid;
+      by_rid = sm.by_rid |> ReplicaID.Map.add rid fd;
+    }
+  in
+  aofs |> Seq.fold_left add empty
 
-let get_fd rid sm = Wp.ReplicaID.Map.find rid sm.by_rid
-let get_rid fd sm = Local_io.FD.Map.find fd sm.by_fd
 let io_reqs { req_buf; _ } = req_buf |> List.to_seq
 
 let transition io_res sm =
+  let get_fd rid = ReplicaID.Map.find rid sm.by_rid in
+  let get_rid fd = FD.Map.find fd sm.by_fd in
   let recv = function
-    | Wp.Append { rid; events } ->
-        let fd = get_fd rid sm in
-        [ Local_io.Append { fd; events } ]
-    | Wp.ClientRead vv ->
-        Wp.VV.to_seq vv
-        |> Seq.map (fun (rid, offset) ->
-               let fd = get_fd rid sm in
-               Local_io.Read { fd; offset })
-        |> List.of_seq
+    | Append { rid; events } -> [ Local_io.Append { fd = get_fd rid; events } ]
+    | ClientRead vv ->
+        let f (rid, offset) = Local_io.Read { fd = get_fd rid; offset } in
+        vv |> VV.to_list |> List.map f
   in
   match io_res with
-  | Local_io.Write { fd; size } ->
-      let rid = get_rid fd sm in
-      let new_vv = Wp.VV.update rid size sm.vv in
-      { sm with vv = new_vv }
-  | Local_io.Recv msg -> { sm with req_buf = recv msg }
+  | Write { fd; size } -> { sm with vv = VV.update (get_rid fd) size sm.vv }
+  | Recv msg -> { sm with req_buf = recv msg }

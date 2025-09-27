@@ -16,7 +16,7 @@ module VV : sig
 
   val empty : t
   val update : ReplicaID.t -> int -> t -> t
-  val to_seq : t -> (ReplicaID.t * int) Seq.t
+  val to_list : t -> (ReplicaID.t * int) list
 end = struct
   type t = int ReplicaID.Map.t
 
@@ -31,7 +31,7 @@ end = struct
     in
     ReplicaID.Map.update id f vv
 
-  let to_seq (vv : t) = ReplicaID.Map.to_seq vv
+  let to_list = ReplicaID.Map.to_list
 end
 
 type incoming =

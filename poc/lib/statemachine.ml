@@ -43,7 +43,7 @@ let transition io_res sm =
   let get_rid fd = FD.Map.find fd sm.remotes.by_fd in
   let recv = function
     | Append { rid; events } -> [ Local_io.Append { fd = get_fd rid; events } ]
-    | ClientRead vv ->
+    | Current vv ->
         let f (rid, count) = Local_io.Read { fd = get_fd rid; count } in
         vv |> VV.to_list |> List.map f
   in

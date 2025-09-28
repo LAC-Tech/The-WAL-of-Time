@@ -41,12 +41,12 @@ let io_reqs sm = List.to_seq sm.req_buf
 let transition io_res sm =
   let get_fd rid = ReplicaID.Map.find rid sm.remotes.by_rid in
   let get_rid fd = FD.Map.find fd sm.remotes.by_fd in
-  let recv = function
-    | Append { rid; events } -> [ Local_io.Append { fd = get_fd rid; events } ]
-    | Current vv ->
-        let f (rid, count) = Local_io.Read { fd = get_fd rid; count } in
-        vv |> VV.to_list |> List.map f
-  in
   match io_res with
   | Write { fd; count } -> { sm with vv = VV.update (get_rid fd) count sm.vv }
-  | Recv msg -> { sm with req_buf = recv msg }
+  | Recv msg -> (
+      match msg with
+      | Append { rid; events } ->
+          { sm with req_buf = [ Local_io.Write { fd = get_fd rid; events } ] }
+      | Current vv ->
+          let f (rid, count) = Local_io.Read { fd = get_fd rid; count } in
+          { sm with req_buf = vv |> VV.to_list |> List.map f })

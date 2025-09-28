@@ -14,9 +14,9 @@ end
 type 'event req =
   | Send of 'event Wp.outgoing
   | Append of { fd : FD.t; events : 'event list }
-  | Read of { fd : FD.t; offset : int }
+  | Read of { fd : FD.t; count : Counter.t }
 
 (* ie, CQE *)
 type 'event res =
-  | Write of { fd : FD.t; size : int }
+  | Write of { fd : FD.t; count : Counter.t }
   | Recv of 'event Wp.incoming

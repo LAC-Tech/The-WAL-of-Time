@@ -5,8 +5,10 @@ type local = { rid : ReplicaID.t; fd : FD.t }
 type remotes = { by_fd : ReplicaID.t FD.Map.t; by_rid : FD.t ReplicaID.Map.t }
 
 type 'e t = {
-  local : local;
-  remotes : remotes;
+  local_rid : ReplicaID.t;
+  local_fd : FD.t;
+  remotes_by_fd : ReplicaID.t FD.Map.t;
+  remotes_by_rid : FD.t ReplicaID.Map.t;
   vv : VV.t;
   req_buf : 'e Local_io.req list;
 }
@@ -18,18 +20,17 @@ let create (local : log) =
     {
       sm with
       vv = sm.vv |> VV.update rid count;
-      remotes =
-        {
-          by_fd = sm.remotes.by_fd |> FD.Map.add fd rid;
-          by_rid = sm.remotes.by_rid |> ReplicaID.Map.add rid fd;
-        };
+      remotes_by_fd = sm.remotes_by_fd |> FD.Map.add fd rid;
+      remotes_by_rid = sm.remotes_by_rid |> ReplicaID.Map.add rid fd;
     }
   in
 
   let empty =
     {
-      local = { rid = local.rid; fd = local.fd };
-      remotes = { by_fd = FD.Map.empty; by_rid = ReplicaID.Map.empty };
+      local_rid = local.rid;
+      local_fd = local.fd;
+      remotes_by_fd = FD.Map.empty;
+      remotes_by_rid = ReplicaID.Map.empty;
       vv = VV.create local.rid local.count;
       req_buf = [];
     }
@@ -39,8 +40,8 @@ let create (local : log) =
 let io_reqs sm = List.to_seq sm.req_buf
 
 let transition io_res sm =
-  let get_fd rid = ReplicaID.Map.find rid sm.remotes.by_rid in
-  let get_rid fd = FD.Map.find fd sm.remotes.by_fd in
+  let get_fd rid = ReplicaID.Map.find rid sm.remotes_by_rid in
+  let get_rid fd = FD.Map.find fd sm.remotes_by_fd in
   match io_res with
   | Write { fd; count } -> { sm with vv = VV.update (get_rid fd) count sm.vv }
   | Recv msg -> (

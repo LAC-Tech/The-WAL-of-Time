@@ -2,7 +2,7 @@
 
 > The WAL weaves as the WAL wills
 
-WAL of Time is a distributed log (in the sense of data storage, not logging). It's designed for high physical availability. WAL of Time is a working name, and subject to change. It will henceforth be written as WOT.
+WAL of Time is a distributed log (in the sense of data storage, not logging). It's designed for high physical availability. WAL of Time is a working name, and subject to change. It is henceforth written as WOT.
 
 ## Overview and Motivation
 
@@ -16,18 +16,13 @@ WOT unashamedly and intentionally prioritizes availability over consistency. A r
 
 ## Design
 
-One node has many topics.
-Each topic is made of 1..N logs.
-There must be one local log, this represents events captured on the current node.
-There can be 0..N remote logs, which represents events captured on other nodes.
+Each node has an immutable log of events that may be synced with other nodes.
+This conceptual log is made up of a of a local log, which represents events captured on the current node, and 0..N remote logs, which represents events captured on other nodes.
 
 The whole system is a single threaded event loop, which resolve to the following IO operations for files on disk:
 - Create
 - Read
 - Append
-- Delete
-
-All files are append-only, and can never be modified; though they can be deleted. 
 
 ## Implementation
 

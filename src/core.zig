@@ -38,11 +38,12 @@ pub const StateMachine = struct {
         self.local_io_req_buf.clearRetainingCapacity();
         switch (res.req) {
             .accept_client_conn => |client_id_or_err| {
-                if (client_id_or_err) |client_id| {
-                    self.enqueue_os_req(.{ .send_conn_ack = client_id });
+                const req = if (client_id_or_err) |client_id| {
+                    .{ .send_conn_ack = client_id }
                 } else |err| {
-                    self.enqueue_os_req(.{ .send_conn_rejected = err });
-                }
+                    .{ .send_conn_rejected = err }
+                };
+                try self.local_io_req_buf.append(req);
             },
 
             else => @panic("TODO"),

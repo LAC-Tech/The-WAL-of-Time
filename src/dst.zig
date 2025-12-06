@@ -38,8 +38,6 @@ pub fn main() !void {
     //    const reqs = try sm.transition(res);
     //    debug.assert(try aio.send(reqs) == reqs.len);
     //}
-    const sm = try core.StateMachine.init();
-    debug.print("{any}", .{sm});
 }
 
 fn get_seed() u64 {

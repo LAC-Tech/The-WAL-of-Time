@@ -1,0 +1,22 @@
+title: Interlog Architecture
+
+sm: State Machine {
+  shape: rectangle
+}
+
+linux: Linux Kernel {
+  shape: cylinder
+}
+
+wait_for_cqe: Wait for CQEs {
+    shape: parallelogram
+}
+
+submit_sqes: Submit SQEs {
+    shape: parallelogram
+}
+
+linux -> wait_for_cqe
+wait_for_cqe -> sm: os_res
+sm -> submit_sqes: "[os_req]"
+submit_sqes -> linux

@@ -5,15 +5,13 @@ const net = std.net;
 const posix = std.posix;
 
 pub const FD = posix.fd_t;
-const core = @import("./core.zig");
-const Sock = core.Socket(FD);
-const Res = core.OSResponse(FD);
+const msg = @import("./msg.zig");
 
 // Almost pointlessly thin wrapper: the point is to be replaceable with a
 // deterministic version
 pub const AsyncIO = struct {
     ring: linux.IoUring,
-    server_fd: core.Socket(FD).Server,
+    server_fd: msg.Sock.Server,
 
     pub fn init() !@This() {
         // "The number of SQ or CQ entries determines the amount of shared
@@ -42,22 +40,19 @@ pub const AsyncIO = struct {
         const backlog = 128;
         try posix.listen(fd, backlog);
 
-
-
-            // Unlimited accepts!
-            {
-                const req = Req.multishot.accept(
-                    @bitCast(UsrData{ .op = .accept_client_conn }),
-                    server_fd,
-                );
-                try self.os_req_buf.append(req);
-            }
-            // Unlimited receives!
-            {
-                try self.os_req_buf.append(
-                    OSRequest.oneshot.provide_buffers(self.recv_buf),
-                );
-            }
+        // Unlimited accepts!
+        {
+            _ = Req.multishot.accept(
+                @bitCast(msg.Req{.accept_client_conn}),
+                fd,
+            );
+        }
+        // Unlimited receives!
+        {
+            try self.os_req_buf.append(
+                OSRequest.oneshot.provide_buffers(self.recv_buf),
+            );
+        }
 
         return .{ .ring = ring, .server_fd = @enumFromInt(fd) };
     }
@@ -77,7 +72,7 @@ pub const AsyncIO = struct {
         return self.ring.submit();
     }
 
-    pub fn await_res(self: *@This()) !Res {
+    pub fn await_res(self: *@This()) !msg.Res {
         const cqe = try self.ring.copy_cqe();
 
         const err = cqe.err();
@@ -93,7 +88,7 @@ pub const Req = struct {
     pub const T = linux.io_uring_sqe;
 
     pub const oneshot = struct {
-        pub fn send(usr_data: u64, fd: Sock.Client, buf: []const u8) T {
+        pub fn send(usr_data: u64, fd: msg.Sock.Client, buf: []const u8) T {
             var sqe = mem.zeroes(T);
             sqe.prep_send(@intFromEnum(fd), buf, 0);
             sqe.user_data = usr_data;
@@ -108,14 +103,14 @@ pub const Req = struct {
     };
 
     pub const multishot = struct {
-        pub fn accept(usr_data: u64, fd: Sock.Server) T {
+        pub fn accept(usr_data: u64, fd: msg.Sock.Server) T {
             var sqe = mem.zeroes(T);
             sqe.prep_multishot_accept(@intFromEnum(fd), null, null, 0);
             sqe.user_data = usr_data;
             return sqe;
         }
 
-        pub fn recv(usr_data: u64, fd: Sock.Client, buf: []u8) T {
+        pub fn recv(usr_data: u64, fd: msg.Sock.Client, buf: []u8) T {
             var sqe = mem.zeroes(T);
             sqe.prep_recv_multishot(@intFromEnum(fd), buf, 0);
             sqe.ioprio |= linux.IORING_RECV_MULTISHOT;

@@ -26,6 +26,14 @@ The whole system is a single threaded event loop, which resolve to the following
 
 ## Implementation
 
+### Network Protocol
+
+TCP for now. Tried and tested.
+
+Writing a protocol atop UDP feels like a herculean task.
+
+When QUIC is implemented in the kernel, we can reconsider it.
+
 ### Single process that communicates over sockets
 
 While making this embedded and avoiding needlessly copying data does tempt me, I think having the database be a single process has important properties wrt isolation and deployment. Something of Joe Armstrong's "let it crash" philosophy has seeped through to me.

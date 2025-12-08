@@ -3,20 +3,20 @@ title: |md
 | {near: top-center}
 
 sm: State Machine {
-    shape: class
-    -node_id: NodeId
-    -local_fd: FD
-    -remote_fds: "Map<NodeId, FD>"
-    -buffered_os_reqs: "OsReq[]"
-    +transition(OsRes): "OsReq[]"
+  shape: class
+  -node_id: NodeId
+  -local_fd: FD
+  -remote_fds: "Map<NodeId, FD>"
+  -buffered_reqs: "Os::Req[]"
+  # transition(OsRes): "Os::Req[]"
 }
 
-linux {
-    shape: class
-    -io_uring: IoUring
-    wait_for_res(): OsRes
-    "submit_reqs(OsReq[])": usize
+linux: {
+  shape: class
+  -io_uring: IoUring
+  # wait_for_res(): Os::Res
+  # "submit_reqs(Os::Req[])": usize
 }
 
-sm -> linux: "OsReq[]"
-linux -> sm: "OsRes"
+sm -> linux: "submit these SQEs"
+linux -> sm: "wait for a CQE"

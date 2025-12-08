@@ -1,0 +1,22 @@
+title: |md
+  # Interlog
+| {near: top-center}
+
+sm: State Machine {
+    shape: class
+    -node_id: NodeId
+    -local_fd: FD
+    -remote_fds: "Map<NodeId, FD>"
+    -buffered_os_reqs: "OsReq[]"
+    +transition(OsRes): "OsReq[]"
+}
+
+linux {
+    shape: class
+    -io_uring: IoUring
+    wait_for_res(): OsRes
+    "submit_reqs(OsReq[])": usize
+}
+
+sm -> linux: "OsReq[]"
+linux -> sm: "OsRes"

@@ -4,3 +4,5 @@ implement create topic logic
 revisit recv multishot
 correct flags for multishot recv, based on provided buffers
 provide buffers one shot
+move no_std logic into core library
+create sim binary package, with std

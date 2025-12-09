@@ -4,16 +4,16 @@ title: |md
 
 sm: State Machine {
   shape: class
-  -node_id: NodeId
-  -local_fd: FD
-  -remote_fds: "Map<NodeId, FD>"
-  -buffered_reqs: "Os::Req[]"
+  -node_id
+  -local_fd
+  -remote_fds
+  -buffered_reqs
   # transition(OsRes): "Os::Req[]"
 }
 
 linux: {
   shape: class
-  -io_uring: IoUring
+  -io_uring
   # wait_for_res(): Os::Res
   # "submit_reqs(Os::Req[])": usize
 }

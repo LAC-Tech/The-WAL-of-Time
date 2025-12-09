@@ -5,3 +5,4 @@ revisit recv multishot
 correct flags for multishot recv, based on provided buffers
 provide buffers one shot
 implement open req/res
+where will the buffers for write, recv etc be? share buffers?

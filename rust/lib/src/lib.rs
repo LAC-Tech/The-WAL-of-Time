@@ -1,5 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
+/// Data that comes in from outside the system
+mod msg {
+    enum Msg<'os_buf> {
+        LocalAppend(&'os_buf [u8]),
+    }
+}
+
 /// This modules bridges the gap between the state machine and particular OS
 /// They are OS independent, but also represent quite low level operations
 mod os {

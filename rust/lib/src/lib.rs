@@ -1,15 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-fn main() {
-    let sm = state_machine::StateMachine::default();
-}
-
-#[cfg(not(test))]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
-
 /// This modules bridges the gap between the state machine and particular OS
 /// They are OS independent, but also represent quite low level operations
 mod os {
@@ -29,7 +19,7 @@ mod os {
     }
 }
 
-mod state_machine {
+pub mod state_machine {
     mod config {
         // TODO: come up with reasoning for this number, and stick with it
         pub const MAX_REPLICAS: usize = 32;

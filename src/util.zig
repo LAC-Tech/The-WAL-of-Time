@@ -87,13 +87,9 @@ pub fn SlotMap(
     };
 }
 
-fn u32_eql(a: u32, b: u32) bool {
-    return std.meta.eql(a, b);
-}
-
 test "SlotMap" {
     const allocator = std.testing.allocator;
-    const SM = SlotMap(u32, u32_eql, .{ .duplicates = false });
+    const SM = SlotMap(u32, std.meta.eql, .{ .duplicates = false });
     var sm = try SM.init(allocator, 8);
     defer sm.deinit(allocator);
 

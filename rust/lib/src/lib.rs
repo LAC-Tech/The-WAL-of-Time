@@ -1,22 +1,36 @@
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
+
+#[derive(Copy, Clone, Default, Ord, Eq, PartialEq, PartialOrd)]
+struct NodeID(u128);
+
 /// Data that comes in from outside the system
 mod msg {
-    enum Msg<'os_buf> {
-        LocalAppend(&'os_buf [u8]),
+    use crate::NodeID;
+
+    #[derive(Clone, Copy)]
+    pub enum Msg<'a> {
+        LocalAppend(&'a [u8]),
+        RemoteAppend(NodeID, &'a [u8]),
     }
 }
 
 /// This modules bridges the gap between the state machine and particular OS
 /// They are OS independent, but also represent quite low level operations
 mod os {
+    use crate::msg;
+
     #[derive(Clone, Copy, Default)]
-    pub enum Req {
+    pub enum Req<'a> {
         #[default]
-        Illegal,
+        Illegal, // This is only here because RemoteFDs needs a default
+        Recv(msg::Msg<'a>),
     }
 
-    pub enum Res {}
+    pub enum Res {
+        Recv { rc: i32, buf_idx: u32 },
+    }
 
     trait OS {
         fn wait_for_res() -> Res;
@@ -25,80 +39,90 @@ mod os {
 }
 
 pub mod state_machine {
-    use crate::os;
-    use crate::stack_vec::StackVec;
+    use crate::{NodeID, os};
+    use crate::{array_map::ArrayMap, stack_vec::StackVec};
+    use alloc::boxed::Box;
 
     mod config {
         // TODO: come up with reasoning for this number, and stick with it
         pub const MAX_REPLICAS: usize = 32;
         // TODO: this can be worked out statically
         pub const MAX_OUTPUT_REQS: usize = 1;
+        // TODO: I just made this up
+        pub const MAX_RECV_SIZE_BYTES: usize = 4096;
     }
 
-    #[derive(Copy, Clone, Default, Ord, Eq, PartialEq, PartialOrd)]
-    struct NodeID(u128);
-
-    #[derive(Default)]
-    pub struct StateMachine {
+    pub struct StateMachine<'a> {
         local_fd: i32,
-        remote_fds: remote_fds::Map,
-        output_reqs: StackVec<os::Req, { config::MAX_OUTPUT_REQS }>,
+        remote_fds: ArrayMap<NodeID, i32, { config::MAX_REPLICAS }>,
+        output_reqs: StackVec<os::Req<'a>, { config::MAX_OUTPUT_REQS }>,
+        buf: Box<[u8; config::MAX_RECV_SIZE_BYTES]>,
+        buf_locked: bool,
     }
 
-    impl StateMachine {
+    impl<'a> StateMachine<'a> {
+        pub fn default() -> Self {
+            Self {
+                local_fd: -1,
+                remote_fds: ArrayMap::default(),
+                output_reqs: StackVec::default(),
+                buf: Box::new([0u8; config::MAX_RECV_SIZE_BYTES]),
+                buf_locked: false,
+            }
+        }
         pub fn transition(&mut self, res: os::Res) -> &[os::Req] {
+            use os::{Req, Res};
             self.output_reqs.clear();
             match res {
-                _ => panic!("TODO"),
+                Res::Recv { rc, buf_idx }
             }
 
             &self.output_reqs
         }
     }
+}
 
-    mod remote_fds {
-        use super::{NodeID, StackVec, config};
+// Fixed Capacity, sorted array
+mod array_map {
+    use crate::stack_vec::StackVec;
 
-        #[derive(Default)]
-        pub struct Map {
-            elems: StackVec<(NodeID, i32), { config::MAX_REPLICAS }>,
-            len: usize,
+    enum Err {
+        Overflow,
+        AlreadyExists,
+    }
+
+    #[derive(Default)]
+    pub struct ArrayMap<K: Copy, V: Copy, const CAPACITY: usize> {
+        elems: StackVec<(K, V), { CAPACITY }>,
+        len: usize,
+    }
+
+    impl<K: Copy + Ord, V: Copy, const CAPACITY: usize> ArrayMap<K, V, CAPACITY> {
+        fn get(&self, key: K) -> Option<V> {
+            self.elems
+                .binary_search_by_key(&key, |(id, _fd)| *id)
+                .ok()
+                .map(|index| self.elems[index].1)
         }
 
-        enum MapErr {
-            Overflow,
-            AlreadyExists,
-        }
-
-        // Fixed Capacity, sorted array
-        impl Map {
-            fn get(&self, node_id: NodeID) -> Option<i32> {
-                self.elems
-                    .binary_search_by_key(&node_id, |(id, _fd)| *id)
-                    .ok()
-                    .map(|index| self.elems[index].1)
+        fn add(&mut self, key: K, v: V) -> Result<(), Err> {
+            if self.len >= self.elems.len() {
+                return Err(Err::Overflow);
             }
 
-            fn add(&mut self, node_id: NodeID, fd: i32) -> Result<(), MapErr> {
-                if self.len >= self.elems.len() {
-                    return Err(MapErr::Overflow);
-                }
+            let existing_fd =
+                self.elems.binary_search_by_key(&key, |(k, _v)| *k);
 
-                let existing_fd = self
-                    .elems
-                    .binary_search_by_key(&node_id.0, |(id, _fd)| id.0);
-
-                match existing_fd {
-                    Ok(_) => Err(MapErr::AlreadyExists),
-                    Err(pos) => {
-                        // Shift elements to the right to make space
-                        for i in (pos..self.len).rev() {
-                            self.elems[i + 1] = self.elems[i];
-                        }
-                        self.elems[pos] = (node_id, fd);
-                        self.len += 1;
-                        Ok(())
+            match existing_fd {
+                Ok(_) => Err(Err::AlreadyExists),
+                Err(pos) => {
+                    // Shift elements to the right to make space
+                    for i in (pos..self.len).rev() {
+                        self.elems[i + 1] = self.elems[i];
                     }
+                    self.elems[pos] = (key, v);
+                    self.len += 1;
+                    Ok(())
                 }
             }
         }
@@ -131,7 +155,6 @@ mod stack_vec {
         }
     }
 
-    // Deref to slice - allows using & to get a slice
     impl<T, const CAPACITY: usize> Deref for StackVec<T, CAPACITY> {
         type Target = [T];
 
@@ -150,7 +173,6 @@ mod stack_vec {
         }
     }
 
-    // IndexMut trait for mutable indexing: vec[i] = value
     impl<T, const CAPACITY: usize> IndexMut<usize> for StackVec<T, CAPACITY> {
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
             self.check_index(index);

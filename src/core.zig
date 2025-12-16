@@ -9,10 +9,13 @@ const testing = std.testing;
 
 const msg = @import("msg.zig");
 const local_io = msg.local_io;
+const util = @import("./util.zig");
 
 /// Deterministic, in-memory state machine that keeps track of things while the
 /// node is running.
 pub const StateMachine = struct {
+    bufs: util.SlotMap(u256, std.meta.eql, .{ .duplicates = false }),
+
     /// State Machine Transition Function
     /// After the OS respondes with information about an action that's been
     /// completed, the state machine calculates what to request from the OS.

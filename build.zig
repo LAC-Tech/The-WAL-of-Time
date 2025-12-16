@@ -1,11 +1,11 @@
 const std = @import("std");
 
 const executables = .{
-    .{
-        .name = "server",
-        .description = "Run the server",
-        .path = "src/server.zig",
-    },
+    //.{
+    //    .name = "server",
+    //    .description = "Run the server",
+    //    .path = "src/server.zig",
+    //},
     .{
         .name = "client",
         .description = "Run the client",

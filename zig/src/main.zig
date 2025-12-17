@@ -170,7 +170,7 @@ const linux = struct {
         }
     };
 
-    fn setup_listening_socket() !i32 {
+    fn init_server_fd() !i32 {
         const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
         const opt: c_int = 1;
 
@@ -218,9 +218,9 @@ const linux = struct {
             return self._ring.copy_cqe();
         }
 
-        fn accept(self: *AsyncIO, listen_fd: i32, msg: OsMsg.Accept) !void {
+        fn accept(self: *AsyncIO, server_fd: i32, msg: OsMsg.Accept) !void {
             var sqe = try self._ring.get_sqe();
-            sqe.prep_multishot_accept(listen_fd, null, null, 0);
+            sqe.prep_multishot_accept(server_fd, null, null, 0);
             sqe.user_data = msg.toUserData();
         }
 
@@ -260,10 +260,10 @@ pub fn main() !void {
     var aio = try linux.AsyncIO.init(allocator);
     defer aio.deinit(allocator);
 
-    const listen_fd = try linux.setup_listening_socket();
+    const server_fd = try linux.init_server_fd();
     debug.print("Listening on port {d}\n", .{config.port});
 
-    try aio.accept(listen_fd, OsMsg.accept());
+    try aio.accept(server_fd, OsMsg.accept());
 
     while (true) {
         _ = try aio.submit();
@@ -279,7 +279,7 @@ pub fn main() !void {
                 if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
                     // Accept multishot ended (no MORE flag) - restart it
                     debug.print("accept multishot ended, restarting\n", .{});
-                    try aio.accept(listen_fd, OsMsg.accept());
+                    try aio.accept(server_fd, OsMsg.accept());
                 }
             },
             .recv => {

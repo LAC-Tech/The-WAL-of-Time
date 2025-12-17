@@ -193,37 +193,41 @@ const linux = struct {
     }
 
     const AsyncIO = struct {
-        ring: os.linux.IoUring,
-        buf_ring: BufRing,
+        _ring: os.linux.IoUring,
+        _buf_ring: BufRing,
 
         fn init(allocator: mem.Allocator) !AsyncIO {
             const ring = try os.linux.IoUring.init(config.ring_entries, 0);
 
             return .{
-                .ring = ring,
-                .buf_ring = try BufRing.init(ring.fd, allocator),
+                ._ring = ring,
+                ._buf_ring = try BufRing.init(ring.fd, allocator),
             };
         }
 
         fn deinit(self: *AsyncIO, allocator: mem.Allocator) void {
-            self.ring.deinit();
-            self.buf_ring.deinit(allocator);
+            self._ring.deinit();
+            self._buf_ring.deinit(allocator);
         }
 
         fn submit(self: *AsyncIO) !u32 {
-            return self.ring.submit();
+            return self._ring.submit();
+        }
+
+        fn waitForReq(self: *AsyncIO) !os.linux.io_uring_cqe {
+            return self._ring.copy_cqe();
         }
 
         fn accept(self: *AsyncIO, listen_fd: i32, msg: OsMsg.Accept) !void {
-            var sqe = try self.ring.get_sqe();
+            var sqe = try self._ring.get_sqe();
             sqe.prep_multishot_accept(listen_fd, null, null, 0);
             sqe.user_data = msg.toUserData();
         }
 
-        fn recv(self: *AsyncIO, client_fd: i32, msg: OsMsg.Recv) !void {
-            var sqe = try self.ring.get_sqe();
+        fn recv(self: *AsyncIO, msg: OsMsg.Recv) !void {
+            var sqe = try self._ring.get_sqe();
             const empty_buf = &[_]u8{};
-            sqe.prep_recv_multishot(@intCast(client_fd), empty_buf, 0);
+            sqe.prep_recv_multishot(@intCast(msg.client_fd), empty_buf, 0);
             sqe.buf_index = config.bg_id;
             sqe.flags |= os.linux.IOSQE_BUFFER_SELECT;
             sqe.user_data = msg.toUserData();
@@ -232,15 +236,18 @@ const linux = struct {
         fn send(
             self: *AsyncIO,
             client_fd: i32,
-            buf_id: u32,
             len: usize,
             msg: OsMsg.Send,
         ) !void {
-            var sqe = try self.ring.get_sqe();
+            var sqe = try self._ring.get_sqe();
 
-            const buf = self.buf_ring.get(buf_id);
+            const buf = self._buf_ring.get(msg.buf_id);
             sqe.prep_send(client_fd, buf[0..len], 0);
             sqe.user_data = msg.toUserData();
+        }
+
+        fn release_buf(self: *AsyncIO, buf_id: u32) void {
+            self._buf_ring.release(buf_id);
         }
     };
 };
@@ -260,13 +267,13 @@ pub fn main() !void {
 
     while (true) {
         _ = try aio.submit();
-        const cqe = try aio.ring.copy_cqe();
+        const cqe = try aio.waitForReq();
         const user_data = OsMsg.fromUserData(cqe.user_data);
 
         switch (user_data.syscall) {
             .accept => {
                 const client_fd = cqe.res;
-                try aio.recv(client_fd, OsMsg.recv(client_fd));
+                try aio.recv(OsMsg.recv(client_fd));
 
                 // Multishot accept continues while MORE flag is set
                 if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
@@ -276,43 +283,44 @@ pub fn main() !void {
                 }
             },
             .recv => {
-                const client_fd = user_data.payload.recv.client_fd;
+                const msg = user_data.payload.recv;
 
                 if (0 > cqe.res) {
                     // Error occurred - always release the buffer first
                     const buf_id = cqe.flags >> os.linux.IORING_CQE_BUFFER_SHIFT;
-                    aio.buf_ring.release(buf_id);
+                    aio.release_buf(buf_id);
 
                     debug.print(
                         "recv error on fd {d}: {d}\n",
-                        .{ client_fd, -cqe.res },
+                        .{ msg.client_fd, -cqe.res },
                     );
 
                     // If multishot is done (no MORE flag), close socket
                     if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
-                        posix.close(client_fd);
+                        posix.close(msg.client_fd);
                     }
                 } else if (cqe.res == 0) {
                     // Orderly shutdown by client
                     const buf_id = cqe.flags >> os.linux.IORING_CQE_BUFFER_SHIFT;
-                    aio.buf_ring.release(buf_id);
+                    aio.release_buf(buf_id);
 
                     // If multishot is done (no MORE flag), close socket
                     if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
-                        posix.close(client_fd);
+                        posix.close(msg.client_fd);
                     }
                 } else {
                     // Received actual data! Echo it back
                     const buf_id = cqe.flags >> os.linux.IORING_CQE_BUFFER_SHIFT;
                     const len: usize = @intCast(cqe.res);
 
-                    try aio.send(client_fd, buf_id, len, OsMsg.send(buf_id));
+                    try aio.send(msg.client_fd, len, OsMsg.send(buf_id));
                 }
             },
             .send => {
+                const msg = user_data.payload.send;
                 // This is a send completion - return buffer
-                const buf_id = user_data.payload.send.buf_id;
-                aio.buf_ring.release(buf_id);
+                const buf_id = msg.buf_id;
+                aio.release_buf(buf_id);
             },
         }
     }

@@ -11,46 +11,63 @@ const testing = std.testing;
 
 const config = @import("./config.zig");
 
-const UserData = packed struct {
+/// This modules bridges the gap between the state machine and particular OS
+/// They are OS independent, but also represent quite low level operations
+const OsMsg = packed struct {
     syscall: Syscall,
     payload: Payload,
 
+    pub const UserData = u64;
     const Syscall = enum(u8) { accept = 1, recv = 2, send = 3 };
 
+    const Accept = packed struct {
+        _padding: u56 = 0,
+    };
+
+    const Recv = packed struct {
+        client_fd: i32,
+        _padding: u24 = 0,
+    };
+
+    const Send = packed struct {
+        buf_id: u32,
+        _padding: u24 = 0,
+    };
+
     const Payload = packed union {
-        accept: packed struct { _padding: u56 = 0 },
-        recv: packed struct { client_fd: i32, _padding: u24 = 0 },
-        send: packed struct { buf_id: u32, _padding: u24 = 0 },
+        accept: Accept,
+        recv: Recv,
+        send: Send,
     };
 
     comptime {
-        debug.assert(@sizeOf(UserData) == 8);
-        debug.assert(@bitSizeOf(UserData) == 64);
+        debug.assert(@sizeOf(OsMsg) == 8);
+        debug.assert(@bitSizeOf(OsMsg) == 64);
     }
 
-    fn to_u64(self: UserData) u64 {
+    fn toUserData(self: OsMsg) UserData {
         return @bitCast(self);
     }
 
-    fn fromU64(val: u64) UserData {
-        return @bitCast(val);
+    fn fromUserData(ud: UserData) OsMsg {
+        return @bitCast(ud);
     }
 
-    fn accept() UserData {
+    fn accept() OsMsg {
         return .{
             .syscall = .accept,
             .payload = .{ .accept = .{} },
         };
     }
 
-    fn recv(client_fd: i32) UserData {
+    fn recv(client_fd: i32) OsMsg {
         return .{
             .syscall = .recv,
             .payload = .{ .recv = .{ .client_fd = client_fd } },
         };
     }
 
-    fn send(buf_id: u32) UserData {
+    fn send(buf_id: u32) OsMsg {
         return .{
             .syscall = .send,
             .payload = .{ .send = .{ .buf_id = buf_id } },
@@ -64,12 +81,12 @@ test "serde Userdata" {
     debug.print("{}", .{testing.random_seed});
 
     for (0..1_000_000) |_| {
-        const ud = switch (rng.random().enumValue(UserData.Syscall)) {
-            .accept => UserData.accept(),
-            .recv => UserData.recv(rng.random().int(i32)),
-            .send => UserData.send(rng.random().int(u32)),
+        const ud = switch (rng.random().enumValue(OsMsg.Syscall)) {
+            .accept => OsMsg.accept(),
+            .recv => OsMsg.recv(rng.random().int(i32)),
+            .send => OsMsg.send(rng.random().int(u32)),
         };
-        const ud_recvd = UserData.fromU64(ud.to_u64());
+        const ud_recvd = OsMsg.fromUserData(ud.toUserData());
 
         try testing.expectEqual(ud, ud_recvd);
     }
@@ -87,7 +104,10 @@ const linux = struct {
         }
 
         fn init(io_uring_fd: i32, allocator: mem.Allocator) !BufRing {
-            const buffers = try allocator.alloc(u8, config.buf_count * config.buf_size);
+            const buffers = try allocator.alloc(
+                u8,
+                config.buf_count * config.buf_size,
+            );
             const br = try IoUring.setup_buf_ring(
                 io_uring_fd,
                 config.buf_count,
@@ -181,7 +201,7 @@ const linux = struct {
         fn accept(self: *AsyncIO, listen_fd: i32) !void {
             var sqe = try self.ring.get_sqe();
             sqe.prep_multishot_accept(listen_fd, null, null, 0);
-            sqe.user_data = UserData.accept().to_u64();
+            sqe.user_data = OsMsg.accept().toUserData();
         }
 
         fn recv(self: *AsyncIO, client_fd: i32) !void {
@@ -190,7 +210,7 @@ const linux = struct {
             sqe.prep_recv_multishot(@intCast(client_fd), empty_buf, 0);
             sqe.buf_index = config.bg_id;
             sqe.flags |= os.linux.IOSQE_BUFFER_SELECT;
-            sqe.user_data = UserData.recv(client_fd).to_u64();
+            sqe.user_data = OsMsg.recv(client_fd).toUserData();
         }
 
         fn send(
@@ -203,7 +223,7 @@ const linux = struct {
 
             const buf = self.buf_ring.get(buf_id);
             sqe.prep_send(client_fd, buf[0..len], 0);
-            sqe.user_data = UserData.send(buf_id).to_u64();
+            sqe.user_data = OsMsg.send(buf_id).toUserData();
         }
     };
 };
@@ -224,7 +244,7 @@ pub fn main() !void {
     while (true) {
         _ = try aio.submit();
         const cqe = try aio.ring.copy_cqe();
-        const user_data = UserData.fromU64(cqe.user_data);
+        const user_data = OsMsg.fromUserData(cqe.user_data);
 
         switch (user_data.syscall) {
             .accept => {

@@ -1,0 +1,132 @@
+//! This modules bridges the gap between the state machine and particular OS
+//! They are OS independent, but also represent quite low level operations
+const std = @import("std");
+const debug = std.debug;
+const testing = std.testing;
+
+const config = @import("config.zig");
+
+/// This modules bridges the gap between the state machine and particular OS
+/// They are OS independent, but also represent quite low level operations
+pub const Accept = packed struct {
+    _padding: u56 = 0,
+
+    pub fn toU64(self: Accept) u64 {
+        const ud = UserData{
+            .syscall = .accept,
+            .msg = .{ .accept = self },
+        };
+        return @bitCast(ud);
+    }
+};
+
+pub const Recv = packed struct {
+    client_fd: i32,
+    _padding: u24 = 0,
+
+    pub fn toU64(self: Recv) u64 {
+        const ud = UserData{
+            .syscall = .recv,
+            .msg = .{ .recv = self },
+        };
+        return @bitCast(ud);
+    }
+};
+
+pub const Send = packed struct {
+    buf_id: u16,
+    _padding: u40 = 0,
+
+    pub fn toU64(self: Send) u64 {
+        const ud = UserData{
+            .syscall = .send,
+            .msg = .{ .send = self },
+        };
+        return @bitCast(ud);
+    }
+};
+
+pub const Syscall = enum(u8) { accept = 1, recv = 2, send = 3 };
+
+const Msg = packed union {
+    accept: Accept,
+    recv: Recv,
+    send: Send,
+};
+
+pub const UserData = packed struct {
+    syscall: Syscall,
+    msg: Msg,
+
+    comptime {
+        debug.assert(@sizeOf(UserData) == 8);
+        debug.assert(@bitSizeOf(UserData) == 64);
+    }
+
+    pub fn accept() Accept {
+        return .{};
+    }
+
+    pub fn recv(client_fd: i32) Recv {
+        return .{ .client_fd = client_fd };
+    }
+
+    pub fn send(buf_id: u16) Send {
+        return .{ .buf_id = buf_id };
+    }
+};
+
+pub const Response = union(enum) {
+    accept_data: struct {
+        client_fd: i32,
+        restart_needed: bool,
+    },
+
+    recv: struct {
+        client_fd: i32,
+        buf_id: u16,
+        restart_needed: bool,
+        result: union(enum) {
+            data: usize,
+            error_code: i32,
+            disconnect: void,
+        },
+    },
+
+    send_complete: struct {
+        buf_id: u16,
+    },
+};
+
+pub fn fromUserData(ud: u64) UserData {
+    return @bitCast(ud);
+}
+
+test "UserData round-trip" {
+    var rng = std.Random.DefaultPrng.init(testing.random_seed);
+
+    debug.print("{}", .{testing.random_seed});
+
+    for (0..1_000_000) |_| {
+        // Create specific struct types
+        const accept_struct = Accept{};
+        const recv_struct = Recv{ .client_fd = rng.random().int(i32) };
+        const send_struct = Send{ .buf_id = rng.random().int(u16) };
+
+        // Test their toU64() methods and round-trip through fromUserData
+        const accept_u64 = accept_struct.toU64();
+        const recv_u64 = recv_struct.toU64();
+        const send_u64 = send_struct.toU64();
+
+        const accept_back = fromUserData(accept_u64);
+        const recv_back = fromUserData(recv_u64);
+        const send_back = fromUserData(send_u64);
+
+        // Verify we get the same values back
+        try testing.expect(accept_back.syscall == .accept);
+        try testing.expect(recv_back.syscall == .recv);
+        try testing.expect(send_back.syscall == .send);
+        try testing.expect(recv_back.msg.recv.client_fd == recv_struct.client_fd);
+        try testing.expect(send_back.msg.send.buf_id == send_struct.buf_id);
+    }
+}

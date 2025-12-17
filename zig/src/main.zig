@@ -10,7 +10,7 @@ const testing = std.testing;
 
 const config = @import("./config.zig");
 
-const os_msg = @import("os_msg.zig");
+const os = @import("os.zig");
 const linux = @import("linux.zig");
 
 pub fn main() !void {
@@ -21,71 +21,72 @@ pub fn main() !void {
     var aio = try linux.AsyncIO.init(allocator);
     defer aio.deinit(allocator);
 
-    const server_fd = try linux.init_server_fd();
+    const server_fd = try linux.initServerFd();
     debug.print("Listening on port {d}\n", .{config.port});
 
-    try aio.accept(server_fd, os_msg.accept());
+    try aio.accept(server_fd, os.UserData.accept());
 
     while (true) {
         _ = try aio.submit();
         const cqe = try aio.waitForReq();
-        const user_data = os_msg.fromUserData(cqe.user_data);
 
-        switch (user_data.syscall) {
-            .accept => {
-                const client_fd = cqe.res;
-                try aio.recv(os_msg.recv(client_fd));
+        switch (linux.resFromCqe(cqe)) {
+            .accept_data => |res| {
+                try aio.recv(os.UserData.recv(res.client_fd));
 
-                // Multishot accept continues while MORE flag is set
-                if ((cqe.flags & std.os.linux.IORING_CQE_F_MORE) == 0) {
-                    // Accept multishot ended (no MORE flag) - restart it
+                if (res.restart_needed) {
                     debug.print("accept multishot ended, restarting\n", .{});
-                    try aio.accept(server_fd, os_msg.accept());
+                    try aio.accept(
+                        server_fd,
+                        os.UserData.accept(),
+                    );
                 }
             },
-            .recv => {
-                const msg = user_data.msg.recv;
-                const buf_id =
-                    cqe.flags >> std.os.linux.IORING_CQE_BUFFER_SHIFT;
 
-                if (cqe.res > 0) {
-                    // Received actual data! Echo it back
-                    const len: usize = @intCast(cqe.res);
-                    try aio.send(msg.client_fd, len, os_msg.send(buf_id));
-                } else {
-                    // Error or orderly shutdown - release buffer
-                    aio.release_buf(buf_id);
-
-                    if (cqe.res == 0) {
-                        debug.print(
-                            "client fd {d} disconnected\n",
-                            .{msg.client_fd},
+            .recv => |res| {
+                switch (res.result) {
+                    .data => |len| {
+                        try aio.send(
+                            res.client_fd,
+                            len,
+                            os.UserData.send(res.buf_id),
                         );
-                    } else if (cqe.res < 0) {
+
+                        if (res.restart_needed) {
+                            try aio.recv(
+                                os.UserData.recv(res.client_fd),
+                            );
+                        }
+                    },
+
+                    .error_code => |err_code| {
+                        aio.release_buf(res.buf_id);
                         debug.print(
                             "recv error on fd {d}: {d}\n",
-                            .{ msg.client_fd, -cqe.res },
+                            .{ res.client_fd, err_code },
                         );
-                    }
-                }
 
-                // Handle multishot recv ended (no MORE flag)
-                const recv_ended = cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0;
+                        if (res.restart_needed) {
+                            posix.close(res.client_fd);
+                        }
+                    },
 
-                if (recv_ended) {
-                    if (cqe.res > 0) {
-                        // Restart multishot recv for successful data
-                        try aio.recv(os_msg.recv(msg.client_fd));
-                    } else {
-                        // Close socket on error/disconnect
-                        posix.close(msg.client_fd);
-                    }
+                    .disconnect => {
+                        aio.release_buf(res.buf_id);
+                        debug.print(
+                            "client fd {d} disconnected\n",
+                            .{res.client_fd},
+                        );
+
+                        if (res.restart_needed) {
+                            posix.close(res.client_fd);
+                        }
+                    },
                 }
             },
-            .send => {
-                const msg = user_data.msg.send;
-                // This is a send completion - return buffer
-                aio.release_buf(msg.buf_id);
+
+            .send_complete => |data| {
+                aio.release_buf(data.buf_id);
             },
         }
     }

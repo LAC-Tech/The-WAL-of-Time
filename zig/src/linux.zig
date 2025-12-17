@@ -5,9 +5,7 @@ const linux = std.os.linux;
 const posix = std.posix;
 
 const config = @import("config.zig");
-const os_msg = @import("os_msg.zig");
-
-pub const UserData = os_msg.UserData;
+const os = @import("os.zig");
 
 pub const AsyncIO = struct {
     _ring: linux.IoUring,
@@ -20,7 +18,7 @@ pub const AsyncIO = struct {
             [config.buf_size]u8,
             config.buf_count,
         );
-        const buf_ring = try init_io_uring_buf_ring(ring.fd, buffers);
+        const buf_ring = try initIoUringBufRing(ring.fd, buffers);
 
         return .{
             ._ring = ring,
@@ -42,39 +40,39 @@ pub const AsyncIO = struct {
         return self._ring.copy_cqe();
     }
 
-    pub fn accept(self: *AsyncIO, server_fd: i32, msg: os_msg.Accept) !void {
+    pub fn accept(self: *AsyncIO, server_fd: i32, msg: os.Accept) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_multishot_accept(server_fd, null, null, 0);
-        sqe.user_data = msg.toUserData();
+        sqe.user_data = msg.toU64();
     }
 
-    pub fn recv(self: *AsyncIO, msg: os_msg.Recv) !void {
+    pub fn recv(self: *AsyncIO, msg: os.Recv) !void {
         var sqe = try self._ring.get_sqe();
         const empty_buf = &[_]u8{};
-        sqe.prep_recv_multishot(@intCast(msg.client_fd), empty_buf, 0);
+        sqe.prep_recv_multishot(msg.client_fd, empty_buf, 0);
         sqe.buf_index = config.bg_id;
         sqe.flags |= linux.IOSQE_BUFFER_SELECT;
-        sqe.user_data = msg.toUserData();
+        sqe.user_data = msg.toU64();
     }
 
     pub fn send(
         self: *AsyncIO,
         client_fd: i32,
         len: usize,
-        msg: os_msg.Send,
+        msg: os.Send,
     ) !void {
         var sqe = try self._ring.get_sqe();
         const buf = &self._buffers[msg.buf_id];
         sqe.prep_send(client_fd, buf[0..len], 0);
-        sqe.user_data = msg.toUserData();
+        sqe.user_data = msg.toU64();
     }
 
-    pub fn release_buf(self: *AsyncIO, buf_id: u32) void {
+    pub fn release_buf(self: *AsyncIO, buf_id: u16) void {
         debug.assert(config.buf_count > buf_id);
         linux.IoUring.buf_ring_add(
             self._buf_ring,
             &self._buffers[buf_id],
-            @intCast(buf_id),
+            buf_id,
             linux.IoUring.buf_ring_mask(config.buf_count),
             0,
         );
@@ -82,7 +80,60 @@ pub const AsyncIO = struct {
     }
 };
 
-fn init_io_uring_buf_ring(
+pub fn resFromCqe(cqe: linux.io_uring_cqe) os.Response {
+    const user_data = os.fromUserData(cqe.user_data);
+    const more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
+    const restart_needed = !more;
+
+    return switch (user_data.syscall) {
+        .accept => .{
+            .accept_data = .{
+                .client_fd = cqe.res,
+                .restart_needed = restart_needed,
+            },
+        },
+        .recv => {
+            const buf_id: u16 =
+                @intCast(cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT);
+
+            if (cqe.res > 0) {
+                return .{
+                    .recv = .{
+                        .client_fd = user_data.msg.recv.client_fd,
+                        .buf_id = buf_id,
+                        .restart_needed = restart_needed,
+                        .result = .{ .data = @intCast(cqe.res) },
+                    },
+                };
+            }
+            if (cqe.res == 0) {
+                return .{
+                    .recv = .{
+                        .client_fd = user_data.msg.recv.client_fd,
+                        .buf_id = buf_id,
+                        .restart_needed = restart_needed,
+                        .result = .{ .disconnect = {} },
+                    },
+                };
+            }
+            return .{
+                .recv = .{
+                    .client_fd = user_data.msg.recv.client_fd,
+                    .buf_id = buf_id,
+                    .restart_needed = restart_needed,
+                    .result = .{ .error_code = -cqe.res },
+                },
+            };
+        },
+        .send => .{
+            .send_complete = .{
+                .buf_id = user_data.msg.send.buf_id,
+            },
+        },
+    };
+}
+
+fn initIoUringBufRing(
     io_uring_fd: i32,
     buffers: [][config.buf_size]u8,
 ) !*linux.io_uring_buf_ring {
@@ -96,20 +147,18 @@ fn init_io_uring_buf_ring(
     linux.IoUring.buf_ring_init(br);
 
     for (0..config.buf_count) |i| {
-        linux.IoUring.buf_ring_add(
-            br,
-            &buffers[i],
-            @intCast(i),
-            linux.IoUring.buf_ring_mask(config.buf_count),
-            @intCast(i),
-        );
+        const mask = linux.IoUring.buf_ring_mask(config.buf_count);
+        const buf_id: u16 = @intCast(i);
+        const buf_offset: u16 = @intCast(i);
+
+        linux.IoUring.buf_ring_add(br, &buffers[i], buf_id, mask, buf_offset);
     }
 
     linux.IoUring.buf_ring_advance(br, config.buf_count);
     return br;
 }
 
-pub fn init_server_fd() !i32 {
+pub fn initServerFd() !i32 {
     const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
     const opt: c_int = 1;
 

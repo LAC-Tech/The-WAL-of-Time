@@ -9,12 +9,7 @@ const posix = std.posix;
 const Random = std.Random;
 const testing = std.testing;
 
-const ring_entries = 256;
-const port = 8080;
-const backlog = 128;
-const buf_count = 32;
-const buf_size = 4096;
-const bg_id = 0;
+const config = @import("./config.zig");
 
 const UserData = packed struct {
     syscall: Syscall,
@@ -88,31 +83,31 @@ const linux = struct {
         _buffers: []u8,
 
         fn nth_buf(buffers: []u8, n: usize) []u8 {
-            return buffers[n * buf_size .. (n + 1) * buf_size];
+            return buffers[n * config.buf_size .. (n + 1) * config.buf_size];
         }
 
         fn init(io_uring_fd: i32, allocator: mem.Allocator) !BufRing {
-            const buffers = try allocator.alloc(u8, buf_count * buf_size);
+            const buffers = try allocator.alloc(u8, config.buf_count * config.buf_size);
             const br = try IoUring.setup_buf_ring(
                 io_uring_fd,
-                buf_count,
-                bg_id,
+                config.buf_count,
+                config.bg_id,
                 mem.zeroes(os.linux.io_uring_buf_reg.Flags),
             );
 
             IoUring.buf_ring_init(br);
 
-            for (0..buf_count) |i| {
+            for (0..config.buf_count) |i| {
                 IoUring.buf_ring_add(
                     br,
                     nth_buf(buffers, i),
                     @intCast(i),
-                    IoUring.buf_ring_mask(buf_count),
+                    IoUring.buf_ring_mask(config.buf_count),
                     @intCast(i),
                 );
             }
 
-            IoUring.buf_ring_advance(br, buf_count);
+            IoUring.buf_ring_advance(br, config.buf_count);
 
             return .{ ._buf_ring = br, ._buffers = buffers };
         }
@@ -122,19 +117,19 @@ const linux = struct {
         }
 
         fn release(self: BufRing, buf_id: u32) void {
-            debug.assert(buf_count > buf_id);
+            debug.assert(config.buf_count > buf_id);
             IoUring.buf_ring_add(
                 self._buf_ring,
                 nth_buf(self._buffers, buf_id),
                 @intCast(buf_id),
-                IoUring.buf_ring_mask(buf_count),
+                IoUring.buf_ring_mask(config.buf_count),
                 0,
             );
             IoUring.buf_ring_advance(self._buf_ring, 1);
         }
 
         fn get(self: BufRing, buf_id: u32) []const u8 {
-            debug.assert(buf_count > buf_id);
+            debug.assert(config.buf_count > buf_id);
             return nth_buf(self._buffers, buf_id);
         }
     };
@@ -152,12 +147,12 @@ const linux = struct {
 
         const addr = os.linux.sockaddr.in{
             .family = os.linux.AF.INET,
-            .port = mem.nativeToBig(u16, port),
+            .port = mem.nativeToBig(u16, config.port),
             .addr = 0,
         };
 
         try posix.bind(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-        try posix.listen(fd, backlog);
+        try posix.listen(fd, config.backlog);
         return fd;
     }
 
@@ -166,7 +161,7 @@ const linux = struct {
         buf_ring: BufRing,
 
         fn init(allocator: mem.Allocator) !AsyncIO {
-            const ring = try os.linux.IoUring.init(ring_entries, 0);
+            const ring = try os.linux.IoUring.init(config.ring_entries, 0);
 
             return .{
                 .ring = ring,
@@ -193,9 +188,22 @@ const linux = struct {
             var sqe = try self.ring.get_sqe();
             const empty_buf = &[_]u8{};
             sqe.prep_recv_multishot(@intCast(client_fd), empty_buf, 0);
-            sqe.buf_index = bg_id;
+            sqe.buf_index = config.bg_id;
             sqe.flags |= os.linux.IOSQE_BUFFER_SELECT;
             sqe.user_data = UserData.recv(client_fd).to_u64();
+        }
+
+        fn send(
+            self: *AsyncIO,
+            client_fd: i32,
+            buf_id: u32,
+            len: usize,
+        ) !void {
+            var sqe = try self.ring.get_sqe();
+
+            const buf = self.buf_ring.get(buf_id);
+            sqe.prep_send(client_fd, buf[0..len], 0);
+            sqe.user_data = UserData.send(buf_id).to_u64();
         }
     };
 };
@@ -209,12 +217,12 @@ pub fn main() !void {
     defer aio.deinit(allocator);
 
     const listen_fd = try linux.setup_listening_socket();
-    debug.print("Listening on port {d}\n", .{port});
+    debug.print("Listening on port {d}\n", .{config.port});
 
     try aio.accept(listen_fd);
 
     while (true) {
-        _ = try aio.ring.submit();
+        _ = try aio.submit();
         const cqe = try aio.ring.copy_cqe();
         const user_data = UserData.fromU64(cqe.user_data);
 
@@ -227,9 +235,7 @@ pub fn main() !void {
                 if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
                     // Accept multishot ended (no MORE flag) - restart it
                     debug.print("accept multishot ended, restarting\n", .{});
-                    var sqe = try aio.ring.get_sqe();
-                    sqe.prep_multishot_accept(listen_fd, null, null, 0);
-                    sqe.user_data = UserData.accept().to_u64();
+                    try aio.accept(listen_fd);
                 }
             },
             .recv => {
@@ -261,11 +267,9 @@ pub fn main() !void {
                 } else {
                     // Received actual data! Echo it back
                     const buf_id = cqe.flags >> os.linux.IORING_CQE_BUFFER_SHIFT;
-                    const data = aio.buf_ring.get(buf_id);
-                    var sqe = try aio.ring.get_sqe();
-                    const bytes = cqe.res;
-                    sqe.prep_send(client_fd, data[0..@intCast(bytes)], 0);
-                    sqe.user_data = UserData.send(buf_id).to_u64();
+                    const len: usize = @intCast(cqe.res);
+
+                    try aio.send(client_fd, buf_id, len);
                 }
             },
             .send => {

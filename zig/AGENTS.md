@@ -36,3 +36,6 @@ Use zig build AND zig build test to confirm code changes.
 ### Memory Management
 - Always pair alloc() with free() via defer
 - Use arena allocators for temporary allocations when appropriate
+
+### Formatting
+- Keep code within 80 columns for readability

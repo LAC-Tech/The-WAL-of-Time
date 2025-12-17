@@ -48,32 +48,38 @@ pub fn main() !void {
                 const buf_id =
                     cqe.flags >> std.os.linux.IORING_CQE_BUFFER_SHIFT;
 
-                if (0 > cqe.res) {
-                    // Error occurred - always release the buffer first
-                    aio.release_buf(buf_id);
-
-                    debug.print(
-                        "recv error on fd {d}: {d}\n",
-                        .{ msg.client_fd, -cqe.res },
-                    );
-
-                    // If multishot is done (no MORE flag), close socket
-                    if ((cqe.flags & std.os.linux.IORING_CQE_F_MORE) == 0) {
-                        posix.close(msg.client_fd);
-                    }
-                } else if (cqe.res == 0) {
-                    // Orderly shutdown by client
-                    aio.release_buf(buf_id);
-
-                    // If multishot is done (no MORE flag), close socket
-                    if ((cqe.flags & std.os.linux.IORING_CQE_F_MORE) == 0) {
-                        posix.close(msg.client_fd);
-                    }
-                } else {
+                if (cqe.res > 0) {
                     // Received actual data! Echo it back
                     const len: usize = @intCast(cqe.res);
-
                     try aio.send(msg.client_fd, len, os_msg.send(buf_id));
+                } else {
+                    // Error or orderly shutdown - release buffer
+                    aio.release_buf(buf_id);
+
+                    if (cqe.res == 0) {
+                        debug.print(
+                            "client fd {d} disconnected\n",
+                            .{msg.client_fd},
+                        );
+                    } else if (cqe.res < 0) {
+                        debug.print(
+                            "recv error on fd {d}: {d}\n",
+                            .{ msg.client_fd, -cqe.res },
+                        );
+                    }
+                }
+
+                // Handle multishot recv ended (no MORE flag)
+                const recv_ended = cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0;
+
+                if (recv_ended) {
+                    if (cqe.res > 0) {
+                        // Restart multishot recv for successful data
+                        try aio.recv(os_msg.recv(msg.client_fd));
+                    } else {
+                        // Close socket on error/disconnect
+                        posix.close(msg.client_fd);
+                    }
                 }
             },
             .send => {

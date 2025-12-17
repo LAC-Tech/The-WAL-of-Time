@@ -44,7 +44,7 @@ pub fn main() !void {
                 }
             },
             .recv => {
-                const msg = user_data.payload.recv;
+                const msg = user_data.msg.recv;
                 const buf_id =
                     cqe.flags >> std.os.linux.IORING_CQE_BUFFER_SHIFT;
 
@@ -77,13 +77,14 @@ pub fn main() !void {
                 }
             },
             .send => {
-                const msg = user_data.payload.send;
+                const msg = user_data.msg.send;
                 // This is a send completion - return buffer
                 aio.release_buf(msg.buf_id);
             },
         }
     }
 }
+
 test {
     @import("std").testing.refAllDecls(@This());
 }

@@ -14,7 +14,7 @@ pub const Accept = packed struct {
     pub fn toUserData(self: Accept) u64 {
         const ud = UserData{
             .syscall = .accept,
-            .payload = .{ .accept = self },
+            .msg = .{ .accept = self },
         };
 
         return @bitCast(ud);
@@ -28,7 +28,7 @@ pub const Recv = packed struct {
     pub fn toUserData(self: Recv) u64 {
         const ud = UserData{
             .syscall = .recv,
-            .payload = .{ .recv = self },
+            .msg = .{ .recv = self },
         };
 
         return @bitCast(ud);
@@ -42,7 +42,7 @@ pub const Send = packed struct {
     pub fn toUserData(self: Send) u64 {
         const ud = UserData{
             .syscall = .send,
-            .payload = .{ .send = self },
+            .msg = .{ .send = self },
         };
 
         return @bitCast(ud);
@@ -51,7 +51,7 @@ pub const Send = packed struct {
 
 pub const Syscall = enum(u8) { accept = 1, recv = 2, send = 3 };
 
-const Payload = packed union {
+const Msg = packed union {
     accept: Accept,
     recv: Recv,
     send: Send,
@@ -59,7 +59,7 @@ const Payload = packed union {
 
 const UserData = packed struct {
     syscall: Syscall,
-    payload: Payload,
+    msg: Msg,
 
     comptime {
         debug.assert(@sizeOf(UserData) == 8);
@@ -96,9 +96,9 @@ test "serde Userdata" {
         };
         const ud_recvd = fromUserData(expected);
         const actual = switch (ud_recvd.syscall) {
-            .accept => ud_recvd.payload.accept.toUserData(),
-            .recv => ud_recvd.payload.recv.toUserData(),
-            .send => ud_recvd.payload.send.toUserData(),
+            .accept => ud_recvd.msg.accept.toUserData(),
+            .recv => ud_recvd.msg.recv.toUserData(),
+            .send => ud_recvd.msg.send.toUserData(),
         };
 
         try testing.expectEqual(expected, actual);

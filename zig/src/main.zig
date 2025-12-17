@@ -22,16 +22,40 @@ const OsMsg = packed struct {
 
     const Accept = packed struct {
         _padding: u56 = 0,
+
+        fn toUserData(self: Accept) UserData {
+            const os_msg = OsMsg{
+                .syscall = .accept,
+                .payload = .{ .accept = self },
+            };
+            return @bitCast(os_msg);
+        }
     };
 
     const Recv = packed struct {
         client_fd: i32,
         _padding: u24 = 0,
+
+        fn toUserData(self: Recv) UserData {
+            const os_msg = OsMsg{
+                .syscall = .recv,
+                .payload = .{ .recv = self },
+            };
+            return @bitCast(os_msg);
+        }
     };
 
     const Send = packed struct {
         buf_id: u32,
         _padding: u24 = 0,
+
+        fn toUserData(self: Send) UserData {
+            const os_msg = OsMsg{
+                .syscall = .send,
+                .payload = .{ .send = self },
+            };
+            return @bitCast(os_msg);
+        }
     };
 
     const Payload = packed union {
@@ -45,33 +69,20 @@ const OsMsg = packed struct {
         debug.assert(@bitSizeOf(OsMsg) == 64);
     }
 
-    fn toUserData(self: OsMsg) UserData {
-        return @bitCast(self);
-    }
-
     fn fromUserData(ud: UserData) OsMsg {
         return @bitCast(ud);
     }
 
-    fn accept() OsMsg {
-        return .{
-            .syscall = .accept,
-            .payload = .{ .accept = .{} },
-        };
+    fn accept() Accept {
+        return .{};
     }
 
-    fn recv(client_fd: i32) OsMsg {
-        return .{
-            .syscall = .recv,
-            .payload = .{ .recv = .{ .client_fd = client_fd } },
-        };
+    fn recv(client_fd: i32) Recv {
+        return .{ .client_fd = client_fd };
     }
 
-    fn send(buf_id: u32) OsMsg {
-        return .{
-            .syscall = .send,
-            .payload = .{ .send = .{ .buf_id = buf_id } },
-        };
+    fn send(buf_id: u32) Send {
+        return .{ .buf_id = buf_id };
     }
 };
 
@@ -81,14 +92,19 @@ test "serde Userdata" {
     debug.print("{}", .{testing.random_seed});
 
     for (0..1_000_000) |_| {
-        const ud = switch (rng.random().enumValue(OsMsg.Syscall)) {
-            .accept => OsMsg.accept(),
-            .recv => OsMsg.recv(rng.random().int(i32)),
-            .send => OsMsg.send(rng.random().int(u32)),
+        const expected = switch (rng.random().enumValue(OsMsg.Syscall)) {
+            .accept => OsMsg.accept().toUserData(),
+            .recv => OsMsg.recv(rng.random().int(i32)).toUserData(),
+            .send => OsMsg.send(rng.random().int(u32)).toUserData(),
         };
-        const ud_recvd = OsMsg.fromUserData(ud.toUserData());
+        const ud_recvd = OsMsg.fromUserData(expected);
+        const actual = switch (ud_recvd.syscall) {
+            .accept => ud_recvd.payload.accept.toUserData(),
+            .recv => ud_recvd.payload.recv.toUserData(),
+            .send => ud_recvd.payload.send.toUserData(),
+        };
 
-        try testing.expectEqual(ud, ud_recvd);
+        try testing.expectEqual(expected, actual);
     }
 }
 
@@ -198,19 +214,19 @@ const linux = struct {
             return self.ring.submit();
         }
 
-        fn accept(self: *AsyncIO, listen_fd: i32) !void {
+        fn accept(self: *AsyncIO, listen_fd: i32, msg: OsMsg.Accept) !void {
             var sqe = try self.ring.get_sqe();
             sqe.prep_multishot_accept(listen_fd, null, null, 0);
-            sqe.user_data = OsMsg.accept().toUserData();
+            sqe.user_data = msg.toUserData();
         }
 
-        fn recv(self: *AsyncIO, client_fd: i32) !void {
+        fn recv(self: *AsyncIO, client_fd: i32, msg: OsMsg.Recv) !void {
             var sqe = try self.ring.get_sqe();
             const empty_buf = &[_]u8{};
             sqe.prep_recv_multishot(@intCast(client_fd), empty_buf, 0);
             sqe.buf_index = config.bg_id;
             sqe.flags |= os.linux.IOSQE_BUFFER_SELECT;
-            sqe.user_data = OsMsg.recv(client_fd).toUserData();
+            sqe.user_data = msg.toUserData();
         }
 
         fn send(
@@ -218,12 +234,13 @@ const linux = struct {
             client_fd: i32,
             buf_id: u32,
             len: usize,
+            msg: OsMsg.Send,
         ) !void {
             var sqe = try self.ring.get_sqe();
 
             const buf = self.buf_ring.get(buf_id);
             sqe.prep_send(client_fd, buf[0..len], 0);
-            sqe.user_data = OsMsg.send(buf_id).toUserData();
+            sqe.user_data = msg.toUserData();
         }
     };
 };
@@ -239,7 +256,7 @@ pub fn main() !void {
     const listen_fd = try linux.setup_listening_socket();
     debug.print("Listening on port {d}\n", .{config.port});
 
-    try aio.accept(listen_fd);
+    try aio.accept(listen_fd, OsMsg.accept());
 
     while (true) {
         _ = try aio.submit();
@@ -249,13 +266,13 @@ pub fn main() !void {
         switch (user_data.syscall) {
             .accept => {
                 const client_fd = cqe.res;
-                try aio.recv(client_fd);
+                try aio.recv(client_fd, OsMsg.recv(client_fd));
 
                 // Multishot accept continues while MORE flag is set
                 if ((cqe.flags & os.linux.IORING_CQE_F_MORE) == 0) {
                     // Accept multishot ended (no MORE flag) - restart it
                     debug.print("accept multishot ended, restarting\n", .{});
-                    try aio.accept(listen_fd);
+                    try aio.accept(listen_fd, OsMsg.accept());
                 }
             },
             .recv => {
@@ -289,7 +306,7 @@ pub fn main() !void {
                     const buf_id = cqe.flags >> os.linux.IORING_CQE_BUFFER_SHIFT;
                     const len: usize = @intCast(cqe.res);
 
-                    try aio.send(client_fd, buf_id, len);
+                    try aio.send(client_fd, buf_id, len, OsMsg.send(buf_id));
                 }
             },
             .send => {

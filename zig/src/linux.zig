@@ -62,12 +62,10 @@ pub const AsyncIO = struct {
     pub fn send(
         self: *AsyncIO,
         client_fd: i32,
-        len: usize, // TODO: can this be in os.Send?
+        buf: []u8,
         msg: os.Send,
-        buffers: Buffers,
     ) !void {
         var sqe = try self._ring.get_sqe();
-        const buf = buffers[msg.buf_id][0..len];
         sqe.prep_send(client_fd, buf, 0);
         sqe.user_data = msg.toU64();
     }

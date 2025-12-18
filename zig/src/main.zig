@@ -50,12 +50,10 @@ pub fn main() !void {
 
                 if (res.syscall_result > 0) {
                     const len: usize = @intCast(res.syscall_result);
-                    try aio.send(
-                        client_fd,
-                        len,
-                        os.UserData.send(res.buf_id),
-                        state.buffers,
-                    );
+                    const buf = state.buffers[res.buf_id][0..len];
+                    const msg = os.UserData.send(res.buf_id);
+
+                    try aio.send(client_fd, buf, msg);
 
                     if (res.restart_needed) {
                         try aio.recv(os.UserData.recv(client_fd));

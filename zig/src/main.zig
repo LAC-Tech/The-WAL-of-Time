@@ -10,6 +10,7 @@ const testing = std.testing;
 
 const config = @import("./config.zig");
 
+const core = @import("core.zig");
 const os = @import("os.zig");
 const linux = @import("linux.zig");
 
@@ -18,8 +19,11 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var aio = try linux.AsyncIO.init(allocator);
-    defer aio.deinit(allocator);
+    const state = try core.State.init(allocator);
+    defer state.deinit(allocator);
+
+    var aio = try linux.AsyncIO.init(state.buffers);
+    defer aio.deinit();
 
     const server_fd = try linux.initServerFd();
     debug.print("Listening on port {d}\n", .{config.port});
@@ -46,15 +50,18 @@ pub fn main() !void {
 
                 if (res.syscall_result > 0) {
                     const len: usize = @intCast(res.syscall_result);
-                    try aio.send(client_fd, len, os.UserData.send(res.buf_id));
+                    try aio.send(
+                        client_fd,
+                        len,
+                        os.UserData.send(res.buf_id),
+                        state.buffers,
+                    );
 
                     if (res.restart_needed) {
-                        try aio.recv(
-                            os.UserData.recv(res.user_data.msg.recv.client_fd),
-                        );
+                        try aio.recv(os.UserData.recv(client_fd));
                     }
                 } else if (res.syscall_result == 0) {
-                    aio.release_buf(res.buf_id);
+                    aio.release_buf(res.buf_id, state.buffers);
                     debug.print(
                         "client fd {d} disconnected\n",
                         .{client_fd},
@@ -64,7 +71,7 @@ pub fn main() !void {
                         posix.close(res.user_data.msg.recv.client_fd);
                     }
                 } else {
-                    aio.release_buf(res.buf_id);
+                    aio.release_buf(res.buf_id, state.buffers);
                     const err_code = -res.syscall_result;
                     debug.print(
                         "recv error on fd {d}: {d}\n",
@@ -77,7 +84,8 @@ pub fn main() !void {
                 }
             },
             .send => {
-                aio.release_buf(res.user_data.msg.send.buf_id);
+                const buf_id = res.user_data.msg.send.buf_id;
+                aio.release_buf(buf_id, state.buffers);
             },
         }
     }

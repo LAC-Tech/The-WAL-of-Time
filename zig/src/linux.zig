@@ -9,29 +9,24 @@ const os = @import("os.zig");
 
 const bg_id = 0;
 
+const Buffers = [][config.buf_size]u8;
+
 pub const AsyncIO = struct {
     _ring: linux.IoUring,
     _buf_ring: *linux.io_uring_buf_ring,
-    _buffers: [][config.buf_size]u8,
 
-    pub fn init(allocator: mem.Allocator) !AsyncIO {
+    pub fn init(buffers: Buffers) !AsyncIO {
         const ring = try linux.IoUring.init(config.ring_entries, 0);
-        const buffers = try allocator.alloc(
-            [config.buf_size]u8,
-            config.buf_count,
-        );
         const buf_ring = try initIoUringBufRing(ring.fd, buffers);
 
         return .{
             ._ring = ring,
             ._buf_ring = buf_ring,
-            ._buffers = buffers,
         };
     }
 
-    pub fn deinit(self: *AsyncIO, allocator: mem.Allocator) void {
+    pub fn deinit(self: *AsyncIO) void {
         self._ring.deinit();
-        allocator.free(self._buffers);
     }
 
     pub fn submit(self: *AsyncIO) !u32 {
@@ -67,20 +62,21 @@ pub const AsyncIO = struct {
     pub fn send(
         self: *AsyncIO,
         client_fd: i32,
-        len: usize,
+        len: usize, // TODO: can this be in os.Send?
         msg: os.Send,
+        buffers: Buffers,
     ) !void {
         var sqe = try self._ring.get_sqe();
-        const buf = &self._buffers[msg.buf_id];
-        sqe.prep_send(client_fd, buf[0..len], 0);
+        const buf = buffers[msg.buf_id][0..len];
+        sqe.prep_send(client_fd, buf, 0);
         sqe.user_data = msg.toU64();
     }
 
-    pub fn release_buf(self: *AsyncIO, buf_id: u16) void {
+    pub fn release_buf(self: *AsyncIO, buf_id: u16, buffers: Buffers) void {
         debug.assert(config.buf_count > buf_id);
         linux.IoUring.buf_ring_add(
             self._buf_ring,
-            &self._buffers[buf_id],
+            &buffers[buf_id],
             buf_id,
             linux.IoUring.buf_ring_mask(config.buf_count),
             0,

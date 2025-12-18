@@ -32,38 +32,32 @@ pub fn main() !void {
 
         switch (res.user_data.syscall) {
             .accept => {
-                const client_fd = res.syscall_res;
+                const client_fd = res.syscall_result;
 
                 try aio.recv(os.UserData.recv(client_fd));
 
                 if (res.restart_needed) {
                     debug.print("accept multishot ended, restarting\n", .{});
-                    try aio.accept(
-                        server_fd,
-                        os.UserData.accept(),
-                    );
+                    try aio.accept(server_fd, os.UserData.accept());
                 }
             },
-
             .recv => {
-                if (res.syscall_res > 0) {
-                    const len: usize = @intCast(res.syscall_res);
-                    try aio.send(
-                        res.user_data.msg.recv.client_fd,
-                        len,
-                        os.UserData.send(res.buf_id),
-                    );
+                const client_fd = res.user_data.msg.recv.client_fd;
+
+                if (res.syscall_result > 0) {
+                    const len: usize = @intCast(res.syscall_result);
+                    try aio.send(client_fd, len, os.UserData.send(res.buf_id));
 
                     if (res.restart_needed) {
                         try aio.recv(
                             os.UserData.recv(res.user_data.msg.recv.client_fd),
                         );
                     }
-                } else if (res.syscall_res == 0) {
+                } else if (res.syscall_result == 0) {
                     aio.release_buf(res.buf_id);
                     debug.print(
                         "client fd {d} disconnected\n",
-                        .{res.user_data.msg.recv.client_fd},
+                        .{client_fd},
                     );
 
                     if (res.restart_needed) {
@@ -71,18 +65,17 @@ pub fn main() !void {
                     }
                 } else {
                     aio.release_buf(res.buf_id);
-                    const err_code = -res.syscall_res;
+                    const err_code = -res.syscall_result;
                     debug.print(
                         "recv error on fd {d}: {d}\n",
-                        .{ res.user_data.msg.recv.client_fd, err_code },
+                        .{ client_fd, err_code },
                     );
 
                     if (res.restart_needed) {
-                        posix.close(res.user_data.msg.recv.client_fd);
+                        posix.close(client_fd);
                     }
                 }
             },
-
             .send => {
                 aio.release_buf(res.user_data.msg.send.buf_id);
             },

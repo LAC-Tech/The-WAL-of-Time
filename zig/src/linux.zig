@@ -7,6 +7,8 @@ const posix = std.posix;
 const config = @import("config.zig");
 const os = @import("os.zig");
 
+const bg_id = 0;
+
 pub const AsyncIO = struct {
     _ring: linux.IoUring,
     _buf_ring: *linux.io_uring_buf_ring,
@@ -43,7 +45,7 @@ pub const AsyncIO = struct {
             .restart_needed = cqe.flags & linux.IORING_CQE_F_MORE == 0,
             .user_data = os.fromU64(cqe.user_data),
             .buf_id = @intCast(cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT),
-            .syscall_res = cqe.res,
+            .syscall_result = cqe.res,
         };
     }
 
@@ -57,7 +59,7 @@ pub const AsyncIO = struct {
         var sqe = try self._ring.get_sqe();
         const empty_buf = &[_]u8{};
         sqe.prep_recv_multishot(msg.client_fd, empty_buf, 0);
-        sqe.buf_index = config.bg_id;
+        sqe.buf_index = bg_id;
         sqe.flags |= linux.IOSQE_BUFFER_SELECT;
         sqe.user_data = msg.toU64();
     }
@@ -94,7 +96,7 @@ fn initIoUringBufRing(
     const br = try linux.IoUring.setup_buf_ring(
         io_uring_fd,
         config.buf_count,
-        config.bg_id,
+        bg_id,
         mem.zeroes(linux.io_uring_buf_reg.Flags),
     );
 

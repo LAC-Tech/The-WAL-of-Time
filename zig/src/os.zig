@@ -78,7 +78,7 @@ pub const Response = struct {
     user_data: UserData,
     restart_needed: bool,
     buf_id: u16,
-    syscall_res: i32,
+    syscall_result: i32,
 };
 
 pub fn fromU64(n: u64) UserData {

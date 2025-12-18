@@ -6,8 +6,6 @@ const testing = std.testing;
 
 const config = @import("config.zig");
 
-/// This modules bridges the gap between the state machine and particular OS
-/// They are OS independent, but also represent quite low level operations
 pub const Accept = packed struct {
     _padding: u56 = 0,
 

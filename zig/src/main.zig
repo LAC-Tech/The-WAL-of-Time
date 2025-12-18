@@ -33,8 +33,9 @@ pub fn main() !void {
     while (true) {
         _ = try aio.submit();
         const res = try aio.waitForRes();
+        const user_data = res.user_data;
 
-        switch (res.user_data.syscall) {
+        switch (user_data.syscall) {
             .accept => {
                 const client_fd = res.syscall_result;
 
@@ -46,7 +47,7 @@ pub fn main() !void {
                 }
             },
             .recv => {
-                const client_fd = res.user_data.msg.recv.client_fd;
+                const client_fd = user_data.msg.recv.client_fd;
 
                 if (res.syscall_result > 0) {
                     const len: usize = @intCast(res.syscall_result);
@@ -66,7 +67,7 @@ pub fn main() !void {
                     );
 
                     if (res.restart_needed) {
-                        posix.close(res.user_data.msg.recv.client_fd);
+                        posix.close(client_fd);
                     }
                 } else {
                     aio.release_buf(res.buf_id, state.buffers);
@@ -82,7 +83,7 @@ pub fn main() !void {
                 }
             },
             .send => {
-                const buf_id = res.user_data.msg.send.buf_id;
+                const buf_id = user_data.msg.send.buf_id;
                 aio.release_buf(buf_id, state.buffers);
             },
         }

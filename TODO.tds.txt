@@ -1,10 +1,2 @@
-write "op arg" type client vm thing. ct for create topic. ops are 1 bytes
-Try multi-shot recv so I don't have to keep putting it back in the queue
-implement create topic logic
-revisit recv multishot
-correct flags for multishot recv, based on provided buffers
-provide buffers one shot
-implement open req/res
-where will the buffers for write, recv etc be? share buffers?
-ditto in... idk zig
-make an echo server using multishot recv and ring buf in c
+write to a file when a message is recevied. send "n bytes written" back to client
+why am I making SYNCHRONOUS syscalls to close inside the event loop?

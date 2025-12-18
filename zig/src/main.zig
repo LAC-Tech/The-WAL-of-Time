@@ -10,7 +10,7 @@ const testing = std.testing;
 const config = @import("./config.zig");
 
 const core = @import("core.zig");
-const os = @import("os.zig");
+const io = @import("io.zig");
 const linux = @import("linux.zig");
 
 pub fn main() !void {
@@ -28,7 +28,7 @@ pub fn main() !void {
     defer linux.close_fd(server_fd);
     debug.print("Listening on port {d}\n", .{config.port});
 
-    try aio.accept(server_fd, os.UserData.accept());
+    try aio.accept(server_fd, io.UserData.accept());
 
     while (true) {
         _ = try aio.submit();
@@ -39,11 +39,11 @@ pub fn main() !void {
             .accept => {
                 const client_fd = res.syscall_result;
 
-                try aio.recv(os.UserData.recv(client_fd));
+                try aio.recv(io.UserData.recv(client_fd));
 
                 if (res.restart_needed) {
                     debug.print("accept multishot ended, restarting\n", .{});
-                    try aio.accept(server_fd, os.UserData.accept());
+                    try aio.accept(server_fd, io.UserData.accept());
                 }
             },
             .recv => {
@@ -52,12 +52,12 @@ pub fn main() !void {
                 if (res.syscall_result > 0) {
                     const len: usize = @intCast(res.syscall_result);
                     const buf = state.buffers[res.buf_id][0..len];
-                    const msg = os.UserData.send(res.buf_id);
+                    const msg = io.UserData.send(res.buf_id);
 
                     try aio.send(client_fd, buf, msg);
 
                     if (res.restart_needed) {
-                        try aio.recv(os.UserData.recv(client_fd));
+                        try aio.recv(io.UserData.recv(client_fd));
                     }
                 } else if (res.syscall_result == 0) {
                     aio.release_buf(res.buf_id, state.buffers);

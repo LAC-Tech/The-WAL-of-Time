@@ -5,7 +5,7 @@ const linux = std.os.linux;
 const posix = std.posix;
 
 const config = @import("config.zig");
-const os = @import("os.zig");
+const io = @import("io.zig");
 
 const bg_id = 0;
 
@@ -33,24 +33,24 @@ pub const AsyncIO = struct {
         return self._ring.submit();
     }
 
-    pub fn waitForRes(self: *AsyncIO) !os.Response {
+    pub fn waitForRes(self: *AsyncIO) !io.Response {
         const cqe = try self._ring.copy_cqe();
 
         return .{
             .restart_needed = cqe.flags & linux.IORING_CQE_F_MORE == 0,
-            .user_data = os.fromU64(cqe.user_data),
+            .user_data = io.fromU64(cqe.user_data),
             .buf_id = @intCast(cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT),
             .syscall_result = cqe.res,
         };
     }
 
-    pub fn accept(self: *AsyncIO, server_fd: i32, msg: os.Accept) !void {
+    pub fn accept(self: *AsyncIO, server_fd: i32, msg: io.Accept) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_multishot_accept(server_fd, null, null, 0);
         sqe.user_data = msg.toU64();
     }
 
-    pub fn recv(self: *AsyncIO, msg: os.Recv) !void {
+    pub fn recv(self: *AsyncIO, msg: io.Recv) !void {
         var sqe = try self._ring.get_sqe();
         const empty_buf = &[_]u8{};
         sqe.prep_recv_multishot(msg.client_fd, empty_buf, 0);
@@ -63,7 +63,7 @@ pub const AsyncIO = struct {
         self: *AsyncIO,
         client_fd: i32,
         buf: []u8,
-        msg: os.Send,
+        msg: io.Send,
     ) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_send(client_fd, buf, 0);

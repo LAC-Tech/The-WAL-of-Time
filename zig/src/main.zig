@@ -4,7 +4,6 @@ const heap = std.heap;
 const math = std.math;
 const mem = std.mem;
 const meta = std.meta;
-const posix = std.posix;
 const Random = std.Random;
 const testing = std.testing;
 
@@ -26,6 +25,7 @@ pub fn main() !void {
     defer aio.deinit();
 
     const server_fd = try linux.initServerFd();
+    defer linux.close_fd(server_fd);
     debug.print("Listening on port {d}\n", .{config.port});
 
     try aio.accept(server_fd, os.UserData.accept());
@@ -67,7 +67,7 @@ pub fn main() !void {
                     );
 
                     if (res.restart_needed) {
-                        posix.close(client_fd);
+                        linux.close_fd(client_fd);
                     }
                 } else {
                     aio.release_buf(res.buf_id, state.buffers);
@@ -78,7 +78,7 @@ pub fn main() !void {
                     );
 
                     if (res.restart_needed) {
-                        posix.close(client_fd);
+                        linux.close_fd(client_fd);
                     }
                 }
             },

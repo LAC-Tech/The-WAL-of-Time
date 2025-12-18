@@ -83,6 +83,10 @@ pub const AsyncIO = struct {
     }
 };
 
+pub fn close_fd(fd: i32) void {
+    std.posix.close(fd);
+}
+
 fn initIoUringBufRing(
     io_uring_fd: i32,
     buffers: [][config.buf_size]u8,

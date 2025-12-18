@@ -28,11 +28,13 @@ pub fn main() !void {
 
     while (true) {
         _ = try aio.submit();
-        const cqe = try aio.waitForReq();
+        const res = try aio.waitForRes();
 
-        switch (linux.resFromCqe(cqe)) {
-            .accept_data => |res| {
-                try aio.recv(os.UserData.recv(res.client_fd));
+        switch (res.user_data.syscall) {
+            .accept => {
+                const client_fd = res.syscall_res;
+
+                try aio.recv(os.UserData.recv(client_fd));
 
                 if (res.restart_needed) {
                     debug.print("accept multishot ended, restarting\n", .{});
@@ -43,50 +45,46 @@ pub fn main() !void {
                 }
             },
 
-            .recv => |res| {
-                switch (res.result) {
-                    .data => |len| {
-                        try aio.send(
-                            res.client_fd,
-                            len,
-                            os.UserData.send(res.buf_id),
+            .recv => {
+                if (res.syscall_res > 0) {
+                    const len: usize = @intCast(res.syscall_res);
+                    try aio.send(
+                        res.user_data.msg.recv.client_fd,
+                        len,
+                        os.UserData.send(res.buf_id),
+                    );
+
+                    if (res.restart_needed) {
+                        try aio.recv(
+                            os.UserData.recv(res.user_data.msg.recv.client_fd),
                         );
+                    }
+                } else if (res.syscall_res == 0) {
+                    aio.release_buf(res.buf_id);
+                    debug.print(
+                        "client fd {d} disconnected\n",
+                        .{res.user_data.msg.recv.client_fd},
+                    );
 
-                        if (res.restart_needed) {
-                            try aio.recv(
-                                os.UserData.recv(res.client_fd),
-                            );
-                        }
-                    },
+                    if (res.restart_needed) {
+                        posix.close(res.user_data.msg.recv.client_fd);
+                    }
+                } else {
+                    aio.release_buf(res.buf_id);
+                    const err_code = -res.syscall_res;
+                    debug.print(
+                        "recv error on fd {d}: {d}\n",
+                        .{ res.user_data.msg.recv.client_fd, err_code },
+                    );
 
-                    .error_code => |err_code| {
-                        aio.release_buf(res.buf_id);
-                        debug.print(
-                            "recv error on fd {d}: {d}\n",
-                            .{ res.client_fd, err_code },
-                        );
-
-                        if (res.restart_needed) {
-                            posix.close(res.client_fd);
-                        }
-                    },
-
-                    .disconnect => {
-                        aio.release_buf(res.buf_id);
-                        debug.print(
-                            "client fd {d} disconnected\n",
-                            .{res.client_fd},
-                        );
-
-                        if (res.restart_needed) {
-                            posix.close(res.client_fd);
-                        }
-                    },
+                    if (res.restart_needed) {
+                        posix.close(res.user_data.msg.recv.client_fd);
+                    }
                 }
             },
 
-            .send_complete => |data| {
-                aio.release_buf(data.buf_id);
+            .send => {
+                aio.release_buf(res.user_data.msg.send.buf_id);
             },
         }
     }

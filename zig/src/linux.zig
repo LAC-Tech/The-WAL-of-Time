@@ -36,8 +36,15 @@ pub const AsyncIO = struct {
         return self._ring.submit();
     }
 
-    pub fn waitForReq(self: *AsyncIO) !linux.io_uring_cqe {
-        return self._ring.copy_cqe();
+    pub fn waitForRes(self: *AsyncIO) !os.Response {
+        const cqe = try self._ring.copy_cqe();
+
+        return .{
+            .restart_needed = cqe.flags & linux.IORING_CQE_F_MORE == 0,
+            .user_data = os.fromU64(cqe.user_data),
+            .buf_id = @intCast(cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT),
+            .syscall_res = cqe.res,
+        };
     }
 
     pub fn accept(self: *AsyncIO, server_fd: i32, msg: os.Accept) !void {
@@ -79,59 +86,6 @@ pub const AsyncIO = struct {
         linux.IoUring.buf_ring_advance(self._buf_ring, 1);
     }
 };
-
-pub fn resFromCqe(cqe: linux.io_uring_cqe) os.Response {
-    const user_data = os.fromUserData(cqe.user_data);
-    const more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
-    const restart_needed = !more;
-
-    return switch (user_data.syscall) {
-        .accept => .{
-            .accept_data = .{
-                .client_fd = cqe.res,
-                .restart_needed = restart_needed,
-            },
-        },
-        .recv => {
-            const buf_id: u16 =
-                @intCast(cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT);
-
-            if (cqe.res > 0) {
-                return .{
-                    .recv = .{
-                        .client_fd = user_data.msg.recv.client_fd,
-                        .buf_id = buf_id,
-                        .restart_needed = restart_needed,
-                        .result = .{ .data = @intCast(cqe.res) },
-                    },
-                };
-            }
-            if (cqe.res == 0) {
-                return .{
-                    .recv = .{
-                        .client_fd = user_data.msg.recv.client_fd,
-                        .buf_id = buf_id,
-                        .restart_needed = restart_needed,
-                        .result = .{ .disconnect = {} },
-                    },
-                };
-            }
-            return .{
-                .recv = .{
-                    .client_fd = user_data.msg.recv.client_fd,
-                    .buf_id = buf_id,
-                    .restart_needed = restart_needed,
-                    .result = .{ .error_code = -cqe.res },
-                },
-            };
-        },
-        .send => .{
-            .send_complete = .{
-                .buf_id = user_data.msg.send.buf_id,
-            },
-        },
-    };
-}
 
 fn initIoUringBufRing(
     io_uring_fd: i32,

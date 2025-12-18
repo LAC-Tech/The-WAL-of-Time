@@ -74,30 +74,15 @@ pub const UserData = packed struct {
     }
 };
 
-pub const Response = union(enum) {
-    accept_data: struct {
-        client_fd: i32,
-        restart_needed: bool,
-    },
-
-    recv: struct {
-        client_fd: i32,
-        buf_id: u16,
-        restart_needed: bool,
-        result: union(enum) {
-            data: usize,
-            error_code: i32,
-            disconnect: void,
-        },
-    },
-
-    send_complete: struct {
-        buf_id: u16,
-    },
+pub const Response = struct {
+    user_data: UserData,
+    restart_needed: bool,
+    buf_id: u16,
+    syscall_res: i32,
 };
 
-pub fn fromUserData(ud: u64) UserData {
-    return @bitCast(ud);
+pub fn fromU64(n: u64) UserData {
+    return @bitCast(n);
 }
 
 test "UserData round-trip" {
@@ -116,9 +101,9 @@ test "UserData round-trip" {
         const recv_u64 = recv_struct.toU64();
         const send_u64 = send_struct.toU64();
 
-        const accept_back = fromUserData(accept_u64);
-        const recv_back = fromUserData(recv_u64);
-        const send_back = fromUserData(send_u64);
+        const accept_back = fromU64(accept_u64);
+        const recv_back = fromU64(recv_u64);
+        const send_back = fromU64(send_u64);
 
         // Verify we get the same values back
         try testing.expect(accept_back.syscall == .accept);

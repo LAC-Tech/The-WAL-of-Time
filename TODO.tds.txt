@@ -1,1 +1,4 @@
 write to a file when a message is recevied. send "n bytes written" back to client
+ask it where it's plan prompt is
+work on your own prompt, explain you prefer a hands on approach, one shot edits
+should the executor be attached to linux, or generic?

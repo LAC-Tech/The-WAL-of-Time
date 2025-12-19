@@ -1,4 +1,4 @@
-//! This modules bridges the gap between the state machine and particular OS
+//! Glue layer between a core and a particular OS
 //! They are OS independent, but also represent quite low level operations
 const std = @import("std");
 const debug = std.debug;
@@ -100,7 +100,7 @@ pub const Request = union(enum) {
     recv: struct { client_fd: i32 },
     send: struct { client_fd: i32, buf_id: u16, data: []const u8 },
     close: struct { client_fd: i32 },
-    re_arm_accept: struct { server_fd: i32 },
+    accept: struct { server_fd: i32 },
     release_buf: struct { buf_id: u16 },
 };
 

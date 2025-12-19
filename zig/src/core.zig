@@ -1,4 +1,5 @@
 const std = @import("std");
+const debug = std.debug;
 const mem = std.mem;
 const testing = std.testing;
 
@@ -47,7 +48,7 @@ pub const State = struct {
                 }
                 if (res.restart_needed) {
                     self.reqs.appendAssumeCapacity(.{
-                        .re_arm_accept = .{ .server_fd = server_fd },
+                        .accept = .{ .server_fd = server_fd },
                     });
                 }
             },
@@ -85,6 +86,46 @@ pub const State = struct {
         }
 
         return self.reqs.items;
+    }
+
+    pub fn execute(self: State, req: io.Request, aio: anytype) !void {
+        switch (req) {
+            .recv => |r| {
+                aio.recv(io.UserData.recv(r.client_fd)) catch |err| {
+                    debug.print(
+                        "failed to queue recv for fd {d}: {}\n",
+                        .{ r.client_fd, err },
+                    );
+                    aio.close(r.client_fd, io.UserData.close()) catch {};
+                };
+            },
+            .send => |s| {
+                const ud = io.UserData.send(s.buf_id);
+                aio.send(s.client_fd, s.data, ud) catch |err| {
+                    debug.print(
+                        "failed to queue send for fd {d}: {}\n",
+                        .{ s.client_fd, err },
+                    );
+                    aio.release_buf(s.buf_id, self.buffers);
+                };
+            },
+            .close => |c| {
+                aio.close(c.client_fd, io.UserData.close()) catch |err| {
+                    debug.print(
+                        "failed to queue close for fd {d}: {}\n",
+                        .{ c.client_fd, err },
+                    );
+                };
+            },
+            .accept => |a| {
+                aio.accept(a.server_fd, io.UserData.accept()) catch |err| {
+                    debug.print("failed to re-arm accept: {}\n", .{err});
+                };
+            },
+            .release_buf => |b| {
+                aio.release_buf(b.buf_id, self.buffers);
+            },
+        }
     }
 };
 

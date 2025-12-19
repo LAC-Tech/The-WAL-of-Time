@@ -4,7 +4,8 @@
     "edit": "allow",
     "bash": {
       "zig build": "allow",
-      "zig build test": "allow"
+      "zig build test": "allow",
+      "git diff": "allow"
     },
     "webfetch": "allow",
     "doom_loop": "ask",

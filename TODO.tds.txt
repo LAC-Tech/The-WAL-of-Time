@@ -1,2 +1,1 @@
 write to a file when a message is recevied. send "n bytes written" back to client
-why am I making SYNCHRONOUS syscalls to close inside the event loop?

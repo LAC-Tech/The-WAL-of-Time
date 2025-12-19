@@ -13,6 +13,9 @@ const Buffers = [][config.buf_size]u8;
 
 const page_size_min = std.heap.page_size_min;
 
+/// We have two purposes here:
+/// - hiding linux specific OS details
+/// - having as little logic as possible, as it's hard to test
 pub const AsyncIO = struct {
     _ring: linux.IoUring,
     _buf_ring: *align(page_size_min) linux.io_uring_buf_ring,

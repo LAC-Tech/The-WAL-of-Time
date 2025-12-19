@@ -55,36 +55,36 @@ pub const AsyncIO = struct {
         };
     }
 
-    pub fn accept(self: *AsyncIO, server_fd: i32, msg: io.Accept) !void {
+    pub fn accept(self: *AsyncIO, server_fd: i32, user_data: io.Accept) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_multishot_accept(server_fd, null, null, 0);
-        sqe.user_data = msg.toU64();
+        sqe.user_data = user_data.toU64();
     }
 
-    pub fn recv(self: *AsyncIO, msg: io.Recv) !void {
+    pub fn recv(self: *AsyncIO, user_data: io.Recv) !void {
         var sqe = try self._ring.get_sqe();
         const empty_buf = &[_]u8{};
-        sqe.prep_recv_multishot(msg.client_fd, empty_buf, 0);
+        sqe.prep_recv_multishot(user_data.client_fd, empty_buf, 0);
         sqe.buf_index = bg_id;
         sqe.flags |= linux.IOSQE_BUFFER_SELECT;
-        sqe.user_data = msg.toU64();
+        sqe.user_data = user_data.toU64();
     }
 
     pub fn send(
         self: *AsyncIO,
         client_fd: i32,
         buf: []const u8,
-        msg: io.Send,
+        user_data: io.Send,
     ) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_send(client_fd, buf, 0);
-        sqe.user_data = msg.toU64();
+        sqe.user_data = user_data.toU64();
     }
 
-    pub fn close(self: *AsyncIO, fd: i32, msg: io.Close) !void {
+    pub fn close(self: *AsyncIO, fd: i32, user_data: io.Close) !void {
         var sqe = try self._ring.get_sqe();
         sqe.prep_close(fd);
-        sqe.user_data = msg.toU64();
+        sqe.user_data = user_data.toU64();
     }
 
     pub fn release_buf(self: *AsyncIO, buf_id: u16, buffers: Buffers) void {

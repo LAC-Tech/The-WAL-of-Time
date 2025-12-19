@@ -28,29 +28,27 @@ pub fn main() !void {
     defer server.deinit();
     debug.print("Listening on port {d}\n", .{config.port});
 
-    try aio.accept(server.fd, io.Accept.init());
+    try aio.accept(server.fd, io.UserData.accept());
 
     while (true) {
         _ = try aio.submit();
         const res = try aio.waitForRes();
+        const reqs = state.transition(res, server.fd);
 
-        const requests = state.transition(res, server.fd);
-
-        for (requests.items[0..requests.len]) |req| {
+        for (reqs) |req| {
             switch (req) {
-                .none => {},
                 .recv => |r| {
-                    aio.recv(io.Recv.init(r.client_fd)) catch |err| {
+                    aio.recv(io.UserData.recv(r.client_fd)) catch |err| {
                         debug.print(
                             "failed to queue recv for fd {d}: {}\n",
                             .{ r.client_fd, err },
                         );
-                        aio.close(r.client_fd, io.Close.init()) catch {};
+                        aio.close(r.client_fd, io.UserData.close()) catch {};
                     };
                 },
                 .send => |s| {
-                    const msg = io.Send.init(s.buf_id);
-                    aio.send(s.client_fd, s.data, msg) catch |err| {
+                    const ud = io.UserData.send(s.buf_id);
+                    aio.send(s.client_fd, s.data, ud) catch |err| {
                         debug.print(
                             "failed to queue send for fd {d}: {}\n",
                             .{ s.client_fd, err },
@@ -59,7 +57,7 @@ pub fn main() !void {
                     };
                 },
                 .close => |c| {
-                    aio.close(c.client_fd, io.Close.init()) catch |err| {
+                    aio.close(c.client_fd, io.UserData.close()) catch |err| {
                         debug.print(
                             "failed to queue close for fd {d}: {}\n",
                             .{ c.client_fd, err },
@@ -67,7 +65,7 @@ pub fn main() !void {
                     };
                 },
                 .re_arm_accept => |a| {
-                    aio.accept(a.server_fd, io.Accept.init()) catch |err| {
+                    aio.accept(a.server_fd, io.UserData.accept()) catch |err| {
                         debug.print("failed to re-arm accept: {}\n", .{err});
                     };
                 },

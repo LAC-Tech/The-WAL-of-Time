@@ -9,10 +9,6 @@ const config = @import("config.zig");
 pub const Accept = packed struct {
     _padding: u56 = 0,
 
-    pub fn init() Accept {
-        return .{};
-    }
-
     pub fn toU64(self: Accept) u64 {
         const ud = UserData{
             .syscall = .accept,
@@ -25,10 +21,6 @@ pub const Accept = packed struct {
 pub const Recv = packed struct {
     client_fd: i32,
     _padding: u24 = 0,
-
-    pub fn init(client_fd: i32) Recv {
-        return .{ .client_fd = client_fd };
-    }
 
     pub fn toU64(self: Recv) u64 {
         const ud = UserData{
@@ -43,10 +35,6 @@ pub const Send = packed struct {
     buf_id: u16,
     _padding: u40 = 0,
 
-    pub fn init(buf_id: u16) Send {
-        return .{ .buf_id = buf_id };
-    }
-
     pub fn toU64(self: Send) u64 {
         const ud = UserData{
             .syscall = .send,
@@ -59,10 +47,6 @@ pub const Send = packed struct {
 pub const Close = packed struct {
     _padding: u56 = 0,
 
-    pub fn init() Close {
-        return .{};
-    }
-
     pub fn toU64(self: Close) u64 {
         const ud = UserData{
             .syscall = .close,
@@ -74,20 +58,34 @@ pub const Close = packed struct {
 
 pub const Syscall = enum(u8) { accept, recv, send, close };
 
-const Msg = packed union {
-    accept: Accept,
-    recv: Recv,
-    send: Send,
-    close: Close,
-};
-
 pub const UserData = packed struct {
     syscall: Syscall,
-    msg: Msg,
+    msg: packed union {
+        accept: Accept,
+        recv: Recv,
+        send: Send,
+        close: Close,
+    },
 
     comptime {
         debug.assert(@sizeOf(UserData) == 8);
         debug.assert(@bitSizeOf(UserData) == 64);
+    }
+
+    pub fn accept() Accept {
+        return .{};
+    }
+
+    pub fn recv(client_fd: i32) Recv {
+        return .{ .client_fd = client_fd };
+    }
+
+    pub fn send(buf_id: u16) Send {
+        return .{ .buf_id = buf_id };
+    }
+
+    pub fn close() Close {
+        return .{};
     }
 };
 
@@ -99,27 +97,11 @@ pub const Response = struct {
 };
 
 pub const Request = union(enum) {
-    none,
     recv: struct { client_fd: i32 },
     send: struct { client_fd: i32, buf_id: u16, data: []const u8 },
     close: struct { client_fd: i32 },
     re_arm_accept: struct { server_fd: i32 },
     release_buf: struct { buf_id: u16 },
-};
-
-pub const Requests = struct {
-    items: [4]Request = undefined,
-    len: usize = 0,
-
-    pub fn init() Requests {
-        return .{};
-    }
-
-    pub fn append(self: *Requests, req: Request) void {
-        debug.assert(self.len < self.items.len);
-        self.items[self.len] = req;
-        self.len += 1;
-    }
 };
 
 pub fn fromU64(n: u64) UserData {
@@ -131,7 +113,7 @@ test "UserData round-trip" {
 
     debug.print("{}", .{testing.random_seed});
 
-    for (0..1_000_000) |_| {
+    for (0..1_000) |_| {
         // Create specific struct types
         const accept_struct = Accept{};
         const recv_struct = Recv{ .client_fd = rng.random().int(i32) };

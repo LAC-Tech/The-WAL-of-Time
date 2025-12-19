@@ -11,9 +11,11 @@ const bg_id = 0;
 
 const Buffers = [][config.buf_size]u8;
 
+const page_size_min = std.heap.page_size_min;
+
 pub const AsyncIO = struct {
     _ring: linux.IoUring,
-    _buf_ring: *linux.io_uring_buf_ring,
+    _buf_ring: *align(page_size_min) linux.io_uring_buf_ring,
 
     pub fn init(buffers: Buffers) !AsyncIO {
         const ring = try linux.IoUring.init(config.ring_entries, 0);
@@ -26,6 +28,12 @@ pub const AsyncIO = struct {
     }
 
     pub fn deinit(self: *AsyncIO) void {
+        linux.IoUring.free_buf_ring(
+            self._ring.fd,
+            self._buf_ring,
+            config.buf_count,
+            bg_id,
+        );
         self._ring.deinit();
     }
 
@@ -70,6 +78,12 @@ pub const AsyncIO = struct {
         sqe.user_data = msg.toU64();
     }
 
+    pub fn close(self: *AsyncIO, fd: i32, msg: io.Close) !void {
+        var sqe = try self._ring.get_sqe();
+        sqe.prep_close(fd);
+        sqe.user_data = msg.toU64();
+    }
+
     pub fn release_buf(self: *AsyncIO, buf_id: u16, buffers: Buffers) void {
         debug.assert(config.buf_count > buf_id);
         linux.IoUring.buf_ring_add(
@@ -83,14 +97,10 @@ pub const AsyncIO = struct {
     }
 };
 
-pub fn close_fd(fd: i32) void {
-    std.posix.close(fd);
-}
-
 fn initIoUringBufRing(
     io_uring_fd: i32,
     buffers: [][config.buf_size]u8,
-) !*linux.io_uring_buf_ring {
+) !*align(page_size_min) linux.io_uring_buf_ring {
     const br = try linux.IoUring.setup_buf_ring(
         io_uring_fd,
         config.buf_count,
@@ -112,24 +122,32 @@ fn initIoUringBufRing(
     return br;
 }
 
-pub fn initServerFd() !i32 {
-    const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-    const opt: c_int = 1;
+pub const Server = struct {
+    fd: i32,
 
-    try posix.setsockopt(
-        fd,
-        posix.SOL.SOCKET,
-        posix.SO.REUSEADDR,
-        mem.asBytes(&opt),
-    );
+    pub fn init() !Server {
+        const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+        const opt: c_int = 1;
 
-    const addr = linux.sockaddr.in{
-        .family = linux.AF.INET,
-        .port = mem.nativeToBig(u16, config.port),
-        .addr = 0,
-    };
+        try posix.setsockopt(
+            fd,
+            posix.SOL.SOCKET,
+            posix.SO.REUSEADDR,
+            mem.asBytes(&opt),
+        );
 
-    try posix.bind(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-    try posix.listen(fd, config.backlog);
-    return fd;
-}
+        const addr = linux.sockaddr.in{
+            .family = linux.AF.INET,
+            .port = mem.nativeToBig(u16, config.port),
+            .addr = 0,
+        };
+
+        try posix.bind(fd, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
+        try posix.listen(fd, config.backlog);
+        return .{ .fd = fd };
+    }
+
+    pub fn deinit(self: Server) void {
+        posix.close(self.fd);
+    }
+};

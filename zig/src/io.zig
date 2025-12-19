@@ -9,6 +9,10 @@ const config = @import("config.zig");
 pub const Accept = packed struct {
     _padding: u56 = 0,
 
+    pub fn init() Accept {
+        return .{};
+    }
+
     pub fn toU64(self: Accept) u64 {
         const ud = UserData{
             .syscall = .accept,
@@ -21,6 +25,10 @@ pub const Accept = packed struct {
 pub const Recv = packed struct {
     client_fd: i32,
     _padding: u24 = 0,
+
+    pub fn init(client_fd: i32) Recv {
+        return .{ .client_fd = client_fd };
+    }
 
     pub fn toU64(self: Recv) u64 {
         const ud = UserData{
@@ -35,6 +43,10 @@ pub const Send = packed struct {
     buf_id: u16,
     _padding: u40 = 0,
 
+    pub fn init(buf_id: u16) Send {
+        return .{ .buf_id = buf_id };
+    }
+
     pub fn toU64(self: Send) u64 {
         const ud = UserData{
             .syscall = .send,
@@ -44,12 +56,29 @@ pub const Send = packed struct {
     }
 };
 
-pub const Syscall = enum(u8) { accept = 1, recv = 2, send = 3 };
+pub const Close = packed struct {
+    _padding: u56 = 0,
+
+    pub fn init() Close {
+        return .{};
+    }
+
+    pub fn toU64(self: Close) u64 {
+        const ud = UserData{
+            .syscall = .close,
+            .msg = .{ .close = self },
+        };
+        return @bitCast(ud);
+    }
+};
+
+pub const Syscall = enum(u8) { accept, recv, send, close };
 
 const Msg = packed union {
     accept: Accept,
     recv: Recv,
     send: Send,
+    close: Close,
 };
 
 pub const UserData = packed struct {
@@ -59,18 +88,6 @@ pub const UserData = packed struct {
     comptime {
         debug.assert(@sizeOf(UserData) == 8);
         debug.assert(@bitSizeOf(UserData) == 64);
-    }
-
-    pub fn accept() Accept {
-        return .{};
-    }
-
-    pub fn recv(client_fd: i32) Recv {
-        return .{ .client_fd = client_fd };
-    }
-
-    pub fn send(buf_id: u16) Send {
-        return .{ .buf_id = buf_id };
     }
 };
 

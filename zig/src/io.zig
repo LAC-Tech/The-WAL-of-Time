@@ -98,6 +98,30 @@ pub const Response = struct {
     syscall_result: i32,
 };
 
+pub const Request = union(enum) {
+    none,
+    recv: struct { client_fd: i32 },
+    send: struct { client_fd: i32, buf_id: u16, data: []const u8 },
+    close: struct { client_fd: i32 },
+    re_arm_accept: struct { server_fd: i32 },
+    release_buf: struct { buf_id: u16 },
+};
+
+pub const Requests = struct {
+    items: [4]Request = undefined,
+    len: usize = 0,
+
+    pub fn init() Requests {
+        return .{};
+    }
+
+    pub fn append(self: *Requests, req: Request) void {
+        debug.assert(self.len < self.items.len);
+        self.items[self.len] = req;
+        self.len += 1;
+    }
+};
+
 pub fn fromU64(n: u64) UserData {
     return @bitCast(n);
 }

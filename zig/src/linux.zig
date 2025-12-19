@@ -73,7 +73,7 @@ pub const AsyncIO = struct {
     pub fn send(
         self: *AsyncIO,
         client_fd: i32,
-        buf: []u8,
+        buf: []const u8,
         msg: io.Send,
     ) !void {
         var sqe = try self._ring.get_sqe();

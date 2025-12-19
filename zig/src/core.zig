@@ -54,6 +54,7 @@ pub const State = struct {
             },
             .recv => {
                 const client_fd = user_data.msg.recv.client_fd;
+                // Recv has completed successfully
                 if (res.syscall_result > 0) {
                     const len: usize = @intCast(res.syscall_result);
                     self.reqs.appendAssumeCapacity(.{
@@ -68,7 +69,9 @@ pub const State = struct {
                             .recv = .{ .client_fd = client_fd },
                         });
                     }
-                } else {
+                }
+                // No messages available OR peer has performed orderly shutdown
+                else {
                     self.reqs.appendAssumeCapacity(.{
                         .release_buf = .{ .buf_id = res.buf_id },
                     });

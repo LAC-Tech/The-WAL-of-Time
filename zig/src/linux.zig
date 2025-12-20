@@ -87,6 +87,27 @@ pub const AsyncIO = struct {
         sqe.prep_close(fd);
         sqe.user_data = user_data.toU64();
     }
+
+    pub fn execute(self: *AsyncIO, req: io.Req, buffers: Buffers) !void {
+        switch (req) {
+            .recv => |r| {
+                try self.recv(io.UserData.recv(r.client_fd));
+            },
+            .send => |s| {
+                const ud = io.UserData.send(s.buf_id);
+                try self.send(s.client_fd, s.data, ud);
+            },
+            .close => |c| {
+                try self.close(c.client_fd, io.UserData.close());
+            },
+            .accept => |a| {
+                try self.accept(a.server_fd, io.UserData.accept());
+            },
+            .release_buf => |b| {
+                self.buf_ring.release(b.buf_id, buffers);
+            },
+        }
+    }
 };
 
 const BufRing = struct {

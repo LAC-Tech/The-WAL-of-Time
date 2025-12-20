@@ -36,7 +36,7 @@ pub fn main() !void {
         const reqs = state.transition(res, server.fd);
 
         for (reqs) |req| {
-            try state.execute(req, &aio);
+            try aio.execute(req, state.buffers);
         }
     }
 }

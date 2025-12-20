@@ -97,27 +97,6 @@ pub const State = struct {
 
         return self.reqs.items;
     }
-
-    pub fn execute(self: State, req: io.Req, aio: anytype) !void {
-        switch (req) {
-            .recv => |r| {
-                try aio.recv(io.UserData.recv(r.client_fd));
-            },
-            .send => |s| {
-                const ud = io.UserData.send(s.buf_id);
-                try aio.send(s.client_fd, s.data, ud);
-            },
-            .close => |c| {
-                try aio.close(c.client_fd, io.UserData.close());
-            },
-            .accept => |a| {
-                try aio.accept(a.server_fd, io.UserData.accept());
-            },
-            .release_buf => |b| {
-                aio.buf_ring.release(b.buf_id, self.buffers);
-            },
-        }
-    }
 };
 
 test "no memory leak with state" {

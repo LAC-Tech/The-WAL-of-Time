@@ -8,12 +8,13 @@ const io = @import("io.zig");
 
 pub const State = struct {
     buffers: [][config.buf_size]u8,
-    req_buf: [2]io.Request,
-    reqs: std.ArrayListUnmanaged(io.Request),
+    req_buf: [2]io.Req,
+    reqs: std.ArrayListUnmanaged(io.Req),
 
     pub fn init(allocator: mem.Allocator) !State {
-        var req_buf: [2]io.Request = undefined;
-        const reqs = std.ArrayListUnmanaged(io.Request).initBuffer(&req_buf);
+        var req_buf: [2]io.Req = undefined;
+        // TODO: there are two of these.. do we need all this?
+        const reqs = std.ArrayListUnmanaged(io.Req).initBuffer(&req_buf);
 
         return .{
             .buffers = try allocator.alloc(
@@ -29,11 +30,16 @@ pub const State = struct {
         allocator.free(self.buffers);
     }
 
+    // Stupid function because zig hasAbsurdlyLongMethodNames
+    fn pushReq(self: *State, req: io.Req) void {
+        self.reqs.appendAssumeCapacity(req);
+    }
+
     pub fn transition(
         self: *State,
-        res: io.Response,
+        res: io.Res,
         server_fd: i32,
-    ) []const io.Request {
+    ) []const io.Req {
         self.reqs.clearRetainingCapacity();
 
         const user_data = res.user_data;
@@ -42,12 +48,12 @@ pub const State = struct {
             .accept => {
                 const client_fd = res.syscall_result;
                 if (client_fd >= 0) {
-                    self.reqs.appendAssumeCapacity(.{
+                    self.pushReq(.{
                         .recv = .{ .client_fd = client_fd },
                     });
                 }
                 if (res.restart_needed) {
-                    self.reqs.appendAssumeCapacity(.{
+                    self.pushReq(.{
                         .accept = .{ .server_fd = server_fd },
                     });
                 }
@@ -56,33 +62,34 @@ pub const State = struct {
                 const client_fd = user_data.msg.recv.client_fd;
                 // Recv has completed successfully
                 if (res.syscall_result > 0) {
+                    const buf = self.buffers[res.buf_id];
                     const len: usize = @intCast(res.syscall_result);
-                    self.reqs.appendAssumeCapacity(.{
+                    self.pushReq(.{
                         .send = .{
                             .client_fd = client_fd,
                             .buf_id = res.buf_id,
-                            .data = self.buffers[res.buf_id][0..len],
+                            .data = buf[0..len],
                         },
                     });
                     if (res.restart_needed) {
-                        self.reqs.appendAssumeCapacity(.{
+                        self.pushReq(.{
                             .recv = .{ .client_fd = client_fd },
                         });
                     }
                 }
                 // No messages available OR peer has performed orderly shutdown
                 else {
-                    self.reqs.appendAssumeCapacity(.{
+                    self.pushReq(.{
                         .release_buf = .{ .buf_id = res.buf_id },
                     });
                     if (res.restart_needed) {
-                        self.reqs.appendAssumeCapacity(.{
+                        self.pushReq(.{
                             .close = .{ .client_fd = client_fd },
                         });
                     }
                 }
             },
-            .send => self.reqs.appendAssumeCapacity(.{
+            .send => self.pushReq(.{
                 .release_buf = .{ .buf_id = user_data.msg.send.buf_id },
             }),
             .close => {},
@@ -91,39 +98,20 @@ pub const State = struct {
         return self.reqs.items;
     }
 
-    pub fn execute(self: State, req: io.Request, aio: anytype) !void {
+    pub fn execute(self: State, req: io.Req, aio: anytype) !void {
         switch (req) {
             .recv => |r| {
-                aio.recv(io.UserData.recv(r.client_fd)) catch |err| {
-                    debug.print(
-                        "failed to queue recv for fd {d}: {}\n",
-                        .{ r.client_fd, err },
-                    );
-                    aio.close(r.client_fd, io.UserData.close()) catch {};
-                };
+                try aio.recv(io.UserData.recv(r.client_fd));
             },
             .send => |s| {
                 const ud = io.UserData.send(s.buf_id);
-                aio.send(s.client_fd, s.data, ud) catch |err| {
-                    debug.print(
-                        "failed to queue send for fd {d}: {}\n",
-                        .{ s.client_fd, err },
-                    );
-                    aio.buf_ring.release(s.buf_id, self.buffers);
-                };
+                try aio.send(s.client_fd, s.data, ud);
             },
             .close => |c| {
-                aio.close(c.client_fd, io.UserData.close()) catch |err| {
-                    debug.print(
-                        "failed to queue close for fd {d}: {}\n",
-                        .{ c.client_fd, err },
-                    );
-                };
+                try aio.close(c.client_fd, io.UserData.close());
             },
             .accept => |a| {
-                aio.accept(a.server_fd, io.UserData.accept()) catch |err| {
-                    debug.print("failed to re-arm accept: {}\n", .{err});
-                };
+                try aio.accept(a.server_fd, io.UserData.accept());
             },
             .release_buf => |b| {
                 aio.buf_ring.release(b.buf_id, self.buffers);

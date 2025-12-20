@@ -89,14 +89,14 @@ pub const UserData = packed struct {
     }
 };
 
-pub const Response = struct {
+pub const Res = struct {
     user_data: UserData,
     restart_needed: bool,
     buf_id: u16,
     syscall_result: i32,
 };
 
-pub const Request = union(enum) {
+pub const Req = union(enum) {
     recv: struct { client_fd: i32 },
     send: struct { client_fd: i32, buf_id: u16, data: []const u8 },
     close: struct { client_fd: i32 },

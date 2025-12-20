@@ -109,7 +109,7 @@ pub const State = struct {
                         "failed to queue send for fd {d}: {}\n",
                         .{ s.client_fd, err },
                     );
-                    aio.release_buf(s.buf_id, self.buffers);
+                    aio.buf_ring.release(s.buf_id, self.buffers);
                 };
             },
             .close => |c| {
@@ -126,7 +126,7 @@ pub const State = struct {
                 };
             },
             .release_buf => |b| {
-                aio.release_buf(b.buf_id, self.buffers);
+                aio.buf_ring.release(b.buf_id, self.buffers);
             },
         }
     }

@@ -11,41 +11,34 @@ const bg_id = 0;
 
 const Buffers = [][config.buf_size]u8;
 
-const page_size_min = std.heap.page_size_min;
-
 /// We have two purposes here:
 /// - hiding linux specific OS details
 /// - having as little logic as possible, as it's hard to test
 pub const AsyncIO = struct {
-    _ring: linux.IoUring,
-    _buf_ring: *align(page_size_min) linux.io_uring_buf_ring,
+    _io_uring: linux.IoUring, // TODO: rename _io_uring
+    buf_ring: BufRing, // TODO: rename buf_ring; it's meant to be public
 
     pub fn init(buffers: Buffers) !AsyncIO {
         const ring = try linux.IoUring.init(config.ring_entries, 0);
-        const buf_ring = try initIoUringBufRing(ring.fd, buffers);
+        const buf_ring = try BufRing.init(ring.fd, buffers);
 
         return .{
-            ._ring = ring,
-            ._buf_ring = buf_ring,
+            ._io_uring = ring,
+            .buf_ring = buf_ring,
         };
     }
 
     pub fn deinit(self: *AsyncIO) void {
-        linux.IoUring.free_buf_ring(
-            self._ring.fd,
-            self._buf_ring,
-            config.buf_count,
-            bg_id,
-        );
-        self._ring.deinit();
+        self.buf_ring.deinit();
+        self._io_uring.deinit();
     }
 
     pub fn submit(self: *AsyncIO) !u32 {
-        return self._ring.submit();
+        return self._io_uring.submit();
     }
 
     pub fn waitForRes(self: *AsyncIO) !io.Response {
-        const cqe = try self._ring.copy_cqe();
+        const cqe = try self._io_uring.copy_cqe();
 
         return .{
             .restart_needed = cqe.flags & linux.IORING_CQE_F_MORE == 0,
@@ -56,13 +49,13 @@ pub const AsyncIO = struct {
     }
 
     pub fn accept(self: *AsyncIO, server_fd: i32, user_data: io.Accept) !void {
-        var sqe = try self._ring.get_sqe();
+        var sqe = try self._io_uring.get_sqe();
         sqe.prep_multishot_accept(server_fd, null, null, 0);
         sqe.user_data = user_data.toU64();
     }
 
     pub fn recv(self: *AsyncIO, user_data: io.Recv) !void {
-        var sqe = try self._ring.get_sqe();
+        var sqe = try self._io_uring.get_sqe();
         const empty_buf = &[_]u8{};
         sqe.prep_recv_multishot(user_data.client_fd, empty_buf, 0);
         sqe.buf_index = bg_id;
@@ -76,54 +69,79 @@ pub const AsyncIO = struct {
         buf: []const u8,
         user_data: io.Send,
     ) !void {
-        var sqe = try self._ring.get_sqe();
+        var sqe = try self._io_uring.get_sqe();
         sqe.prep_send(client_fd, buf, 0);
         sqe.user_data = user_data.toU64();
     }
 
     pub fn close(self: *AsyncIO, fd: i32, user_data: io.Close) !void {
-        var sqe = try self._ring.get_sqe();
+        var sqe = try self._io_uring.get_sqe();
         sqe.prep_close(fd);
         sqe.user_data = user_data.toU64();
     }
-
-    pub fn release_buf(self: *AsyncIO, buf_id: u16, buffers: Buffers) void {
-        debug.assert(config.buf_count > buf_id);
-        linux.IoUring.buf_ring_add(
-            self._buf_ring,
-            &buffers[buf_id],
-            buf_id,
-            linux.IoUring.buf_ring_mask(config.buf_count),
-            0,
-        );
-        linux.IoUring.buf_ring_advance(self._buf_ring, 1);
-    }
 };
 
-fn initIoUringBufRing(
-    io_uring_fd: i32,
-    buffers: [][config.buf_size]u8,
-) !*align(page_size_min) linux.io_uring_buf_ring {
-    const br = try linux.IoUring.setup_buf_ring(
-        io_uring_fd,
-        config.buf_count,
-        bg_id,
-        mem.zeroes(linux.io_uring_buf_reg.Flags),
-    );
+const BufRing = struct {
+    const Ptr = *align(std.heap.page_size_min) linux.io_uring_buf_ring;
+    _io_uring_fd: linux.fd_t,
+    _ptr: Ptr,
 
-    linux.IoUring.buf_ring_init(br);
-
-    for (0..config.buf_count) |i| {
+    fn add_buf(
+        buf_ring_ptr: Ptr,
+        buf_id: u16,
+        buffers: Buffers,
+        buffer_offset: u16,
+    ) void {
         const mask = linux.IoUring.buf_ring_mask(config.buf_count);
-        const buf_id: u16 = @intCast(i);
-        const buf_offset: u16 = @intCast(i);
 
-        linux.IoUring.buf_ring_add(br, &buffers[i], buf_id, mask, buf_offset);
+        linux.IoUring.buf_ring_add(
+            buf_ring_ptr,
+            &buffers[buf_id],
+            buf_id,
+            mask,
+            buffer_offset,
+        );
     }
 
-    linux.IoUring.buf_ring_advance(br, config.buf_count);
-    return br;
-}
+    fn init(
+        io_uring_fd: linux.fd_t,
+        buffers: [][config.buf_size]u8,
+    ) !BufRing {
+        const ptr = try linux.IoUring.setup_buf_ring(
+            io_uring_fd,
+            config.buf_count,
+            bg_id,
+            mem.zeroes(linux.io_uring_buf_reg.Flags),
+        );
+
+        linux.IoUring.buf_ring_init(ptr);
+
+        for (0..config.buf_count) |i| {
+            const buf_id: u16 = @intCast(i);
+            const buf_offset: u16 = @intCast(i);
+            add_buf(ptr, buf_id, buffers, buf_offset);
+        }
+
+        linux.IoUring.buf_ring_advance(ptr, config.buf_count);
+        return .{ ._io_uring_fd = io_uring_fd, ._ptr = ptr };
+    }
+
+    fn deinit(self: BufRing) void {
+        linux.IoUring.free_buf_ring(
+            self._io_uring_fd,
+            self._ptr,
+            config.buf_count,
+            bg_id,
+        );
+    }
+
+    pub fn release(self: BufRing, buf_id: u16, buffers: Buffers) void {
+        debug.assert(config.buf_count > buf_id);
+
+        add_buf(self._ptr, buf_id, buffers, 0);
+        linux.IoUring.buf_ring_advance(self._ptr, 1);
+    }
+};
 
 pub const Server = struct {
     fd: i32,

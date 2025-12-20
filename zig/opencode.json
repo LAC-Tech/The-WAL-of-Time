@@ -10,5 +10,19 @@
     "webfetch": "allow",
     "doom_loop": "ask",
     "external_directory": "deny"
+  },
+  "provider": {
+    "google": {
+      "models": {
+        "gemini-3-pro": {
+          "options": {
+            "thinkingConfig": {
+              "includeThoughts": false,
+              "thinkingLevel": "high"
+            }
+          }
+        }
+      }
+    }
   }
 }

@@ -18,8 +18,6 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var state = try core.State.init();
-
     var aio = try linux.AsyncIO.init();
     defer aio.deinit();
 
@@ -30,16 +28,15 @@ pub fn main() !void {
     defer server.deinit();
     debug.print("Listening on port {d}\n", .{config.port});
 
+    var state_machine = core.StateMachine.init(server.fd);
+
     try aio.accept(server.fd, io.UserData.accept());
     _ = try aio.submit();
 
     while (true) {
         const res = try aio.waitForRes();
-        const reqs = state.transition(res, server.fd);
-
-        for (reqs) |req| {
-            try core.execute(&aio, &buf_ring, req);
-        }
+        const req = state_machine.transition(res);
+        try core.execute(&aio, &buf_ring, req);
     }
 }
 

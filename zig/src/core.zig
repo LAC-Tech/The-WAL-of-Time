@@ -6,33 +6,17 @@ const testing = std.testing;
 const config = @import("config.zig");
 const io = @import("io.zig");
 
-pub const State = struct {
-    req_buf: [2]io.Req,
-    reqs: std.ArrayListUnmanaged(io.Req),
+pub const StateMachine = struct {
+    server_fd: i32,
 
-    pub fn init() !State {
-        var req_buf: [2]io.Req = undefined;
-        // TODO: there are two of these.. do we need all this?
-        const reqs = std.ArrayListUnmanaged(io.Req).initBuffer(&req_buf);
-
-        return .{
-            .req_buf = req_buf,
-            .reqs = reqs,
-        };
-    }
-
-    // Stupid function because zig hasAbsurdlyLongMethodNames
-    fn pushReq(self: *State, req: io.Req) void {
-        self.reqs.appendAssumeCapacity(req);
+    pub fn init(server_fd: i32) StateMachine {
+        return .{ .server_fd = server_fd };
     }
 
     pub fn transition(
-        self: *State,
+        self: *StateMachine,
         res: io.Res,
-        server_fd: i32,
-    ) []const io.Req {
-        self.reqs.clearRetainingCapacity();
-
+    ) io.Req {
         const user_data = res.user_data;
 
         switch (user_data.syscall) {
@@ -45,7 +29,7 @@ pub const State = struct {
                 }
                 if (res.restart_needed) {
                     self.pushReq(.{
-                        .accept = .{ .server_fd = server_fd },
+                        .accept = .{ .server_fd = self.server_fd },
                     });
                 }
             },
@@ -78,15 +62,11 @@ pub const State = struct {
                     }
                 }
             },
-            .send => self.pushReq(.{
+            .send => return .{
                 .release_buf = .{ .buf_id = user_data.msg.send.buf_id },
-            }),
-            .close => self.pushReq(.{
-                .close = .{ .client_fd = user_data.msg.close.client_fd },
-            }),
+            },
+            .close => return .no_op,
         }
-
-        return self.reqs.items;
     }
 };
 
@@ -98,6 +78,7 @@ pub fn execute(
     req: io.Req,
 ) !void {
     switch (req) {
+        .no_op => {},
         .recv => |r| {
             try async_io.recv(io.UserData.recv(r.client_fd));
             _ = try async_io.submit();

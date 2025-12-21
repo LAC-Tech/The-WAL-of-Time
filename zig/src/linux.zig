@@ -50,10 +50,10 @@ pub const AsyncIO = struct {
         const cqe = try self._io_uring.copy_cqe();
 
         return .{
-            .restart_needed = cqe.flags & IORING_CQE_F_MORE == 0,
+            .more = (cqe.flags & IORING_CQE_F_MORE) != 0,
             .user_data = io.fromU64(cqe.user_data),
             .buf_id = @intCast(cqe.flags >> IORING_CQE_BUFFER_SHIFT),
-            .syscall_result = cqe.res,
+            .result = cqe.res,
         };
     }
 

@@ -35,8 +35,8 @@ pub fn main() !void {
 
     while (true) {
         const res = try aio.waitForRes();
-        const req = state_machine.transition(res);
-        try core.execute(&aio, &buf_ring, req);
+        const reqs = state_machine.transition(res);
+        try core.execute(&aio, &buf_ring, reqs);
     }
 }
 

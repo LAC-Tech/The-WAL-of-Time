@@ -98,17 +98,21 @@ pub fn execute(
     switch (req) {
         .recv => |r| {
             try async_io.recv(io.UserData.recv(r.client_fd));
+            _ = try async_io.submit();
         },
         .send => |s| {
             const ud = io.UserData.send(s.buf_id);
             const data = buf_ring.get_buf(s.buf_id)[0..s.len];
             try async_io.send(s.client_fd, data, ud);
+            _ = try async_io.submit();
         },
         .close => |c| {
             try async_io.close(c.client_fd, io.UserData.close());
+            _ = try async_io.submit();
         },
         .accept => |a| {
             try async_io.accept(a.server_fd, io.UserData.accept());
+            _ = try async_io.submit();
         },
         .release_buf => |b| {
             buf_ring.release(b.buf_id);

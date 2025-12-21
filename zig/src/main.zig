@@ -31,9 +31,9 @@ pub fn main() !void {
     debug.print("Listening on port {d}\n", .{config.port});
 
     try aio.accept(server.fd, io.UserData.accept());
+    _ = try aio.submit();
 
     while (true) {
-        _ = try aio.submit();
         const res = try aio.waitForRes();
         const reqs = state.transition(res, server.fd);
 

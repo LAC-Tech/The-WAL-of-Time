@@ -116,3 +116,64 @@ pub fn execute(
     }
     _ = try async_io.submit();
 }
+
+test "StateMachine transition returns multiple requests" {
+    var state_machine = StateMachine.init(3);
+
+    // Scenario 1: Accept success, more coming
+    const accept_res = io.Res{
+        .user_data = io.fromU64(io.UserData.accept().toU64()),
+        .more = true,
+        .buf_id = 0,
+        .result = 4, // client_fd
+    };
+
+    const reqs1 = state_machine.transition(accept_res);
+    try testing.expectEqual(@as(usize, 1), reqs1.len);
+    try testing.expect(reqs1[0] == .recv);
+    try testing.expectEqual(@as(i32, 4), reqs1[0].recv.client_fd);
+
+    // Scenario 2: Recv success, no more coming (needs re-arm)
+    const recv_res = io.Res{
+        .user_data = io.fromU64(io.UserData.recv(4).toU64()),
+        .more = false,
+        .buf_id = 1,
+        .result = 10, // bytes received
+    };
+
+    const reqs2 = state_machine.transition(recv_res);
+    try testing.expectEqual(@as(usize, 2), reqs2.len);
+    try testing.expect(reqs2[0] == .send);
+    try testing.expect(reqs2[1] == .recv);
+    try testing.expectEqual(@as(i32, 4), reqs2[1].recv.client_fd);
+
+    // Test send completion
+    const send_res = io.Res{
+        .user_data = io.fromU64(io.UserData.send(1).toU64()),
+        .more = false,
+        .buf_id = 0,
+        .result = 10, // bytes sent
+    };
+
+    const reqs3 = state_machine.transition(send_res);
+    try testing.expectEqual(@as(usize, 1), reqs3.len);
+    try testing.expect(reqs3[0] == .release_buf);
+    try testing.expectEqual(@as(u16, 1), reqs3[0].release_buf.buf_id);
+}
+
+test "StateMachine recv failure handling" {
+    var state_machine = StateMachine.init(3);
+
+    // Test recv failure (peer shutdown)
+    const recv_res = io.Res{
+        .user_data = io.fromU64(io.UserData.recv(4).toU64()),
+        .more = true,
+        .buf_id = 2,
+        .result = 0, // connection closed
+    };
+
+    const reqs1 = state_machine.transition(recv_res);
+    try testing.expectEqual(@as(usize, 2), reqs1.len);
+    try testing.expect(reqs1[0] == .release_buf);
+    try testing.expect(reqs1[1] == .close);
+}

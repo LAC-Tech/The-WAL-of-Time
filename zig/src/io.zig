@@ -98,7 +98,7 @@ pub const Res = struct {
 
 pub const Req = union(enum) {
     recv: struct { client_fd: i32 },
-    send: struct { client_fd: i32, buf_id: u16, data: []const u8 },
+    send: struct { client_fd: i32, buf_id: u16, len: usize },
     close: struct { client_fd: i32 },
     accept: struct { server_fd: i32 },
     release_buf: struct { buf_id: u16 },

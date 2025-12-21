@@ -18,11 +18,13 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var state = try core.State.init(allocator);
-    defer state.deinit(allocator);
+    var state = try core.State.init();
 
-    var aio = try linux.AsyncIO.init(state.buffers);
+    var aio = try linux.AsyncIO.init();
     defer aio.deinit();
+
+    var buf_ring = try linux.BufRing.init(allocator, aio.io_uring_fd());
+    defer buf_ring.deinit(allocator);
 
     const server = try linux.Server.init();
     defer server.deinit();
@@ -36,7 +38,7 @@ pub fn main() !void {
         const reqs = state.transition(res, server.fd);
 
         for (reqs) |req| {
-            try aio.execute(req, state.buffers);
+            try core.execute(&aio, &buf_ring, req);
         }
     }
 }

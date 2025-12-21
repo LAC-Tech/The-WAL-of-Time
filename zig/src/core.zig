@@ -7,27 +7,18 @@ const config = @import("config.zig");
 const io = @import("io.zig");
 
 pub const State = struct {
-    buffers: [][config.buf_size]u8,
     req_buf: [2]io.Req,
     reqs: std.ArrayListUnmanaged(io.Req),
 
-    pub fn init(allocator: mem.Allocator) !State {
+    pub fn init() !State {
         var req_buf: [2]io.Req = undefined;
         // TODO: there are two of these.. do we need all this?
         const reqs = std.ArrayListUnmanaged(io.Req).initBuffer(&req_buf);
 
         return .{
-            .buffers = try allocator.alloc(
-                [config.buf_size]u8,
-                config.buf_count,
-            ),
             .req_buf = req_buf,
             .reqs = reqs,
         };
-    }
-
-    pub fn deinit(self: *State, allocator: mem.Allocator) void {
-        allocator.free(self.buffers);
     }
 
     // Stupid function because zig hasAbsurdlyLongMethodNames
@@ -62,13 +53,11 @@ pub const State = struct {
                 const client_fd = user_data.msg.recv.client_fd;
                 // Recv has completed successfully
                 if (res.syscall_result > 0) {
-                    const buf = self.buffers[res.buf_id];
-                    const len: usize = @intCast(res.syscall_result);
                     self.pushReq(.{
                         .send = .{
                             .client_fd = client_fd,
                             .buf_id = res.buf_id,
-                            .data = buf[0..len],
+                            .len = @intCast(res.syscall_result),
                         },
                     });
                     if (res.restart_needed) {
@@ -99,7 +88,30 @@ pub const State = struct {
     }
 };
 
-test "no memory leak with state" {
-    var state = try State.init(testing.allocator);
-    defer state.deinit(testing.allocator);
+// In linux, BufRing is tightly coupled to the OS
+// But that won't be the case for other implementations, ie sim
+pub fn execute(
+    async_io: anytype,
+    buf_ring: anytype,
+    req: io.Req,
+) !void {
+    switch (req) {
+        .recv => |r| {
+            try async_io.recv(io.UserData.recv(r.client_fd));
+        },
+        .send => |s| {
+            const ud = io.UserData.send(s.buf_id);
+            const data = buf_ring.get_buf(s.buf_id)[0..s.len];
+            try async_io.send(s.client_fd, data, ud);
+        },
+        .close => |c| {
+            try async_io.close(c.client_fd, io.UserData.close());
+        },
+        .accept => |a| {
+            try async_io.accept(a.server_fd, io.UserData.accept());
+        },
+        .release_buf => |b| {
+            buf_ring.release(b.buf_id);
+        },
+    }
 }

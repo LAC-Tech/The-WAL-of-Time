@@ -2,6 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 const posix = std.posix;
+const testing = std.testing;
 
 const linux = std.os.linux;
 const IoUring = linux.IoUring;
@@ -24,20 +25,20 @@ const Buffers = [][config.buf_size]u8;
 /// - having as little logic as possible, as it's hard to test
 pub const AsyncIO = struct {
     _io_uring: IoUring,
-    buf_ring: BufRing,
 
-    pub fn init(buffers: Buffers) !AsyncIO {
+    pub fn init() !AsyncIO {
         const ring = try IoUring.init(config.ring_entries, 0);
-        const buf_ring = try BufRing.init(ring.fd, buffers);
 
         return .{
             ._io_uring = ring,
-            .buf_ring = buf_ring,
         };
     }
 
+    pub fn io_uring_fd(self: AsyncIO) posix.fd_t {
+        return self._io_uring.fd;
+    }
+
     pub fn deinit(self: *AsyncIO) void {
-        self.buf_ring.deinit();
         self._io_uring.deinit();
     }
 
@@ -87,31 +88,13 @@ pub const AsyncIO = struct {
         sqe.prep_close(fd);
         sqe.user_data = user_data.toU64();
     }
-
-    pub fn execute(self: *AsyncIO, req: io.Req, buffers: Buffers) !void {
-        switch (req) {
-            .recv => |r| {
-                try self.recv(io.UserData.recv(r.client_fd));
-            },
-            .send => |s| {
-                const ud = io.UserData.send(s.buf_id);
-                try self.send(s.client_fd, s.data, ud);
-            },
-            .close => |c| {
-                try self.close(c.client_fd, io.UserData.close());
-            },
-            .accept => |a| {
-                try self.accept(a.server_fd, io.UserData.accept());
-            },
-            .release_buf => |b| {
-                self.buf_ring.release(b.buf_id, buffers);
-            },
-        }
-    }
 };
 
-const BufRing = struct {
+// In other implementations, I imagine the BufRing will be completely userspace
+// But IoUring integrates it quite tightly
+pub const BufRing = struct {
     const Ptr = *align(std.heap.page_size_min) io_uring_buf_ring;
+    _buffers: [][config.buf_size]u8,
     _io_uring_fd: linux.fd_t,
     _ptr: Ptr,
 
@@ -132,10 +115,12 @@ const BufRing = struct {
         );
     }
 
-    fn init(
-        io_uring_fd: fd_t,
-        buffers: [][config.buf_size]u8,
-    ) !BufRing {
+    pub fn init(allocator: mem.Allocator, io_uring_fd: fd_t) !BufRing {
+        const buffers = try allocator.alloc(
+            [config.buf_size]u8,
+            config.buf_count,
+        );
+
         const flags = mem.zeroes(io_uring_buf_reg.Flags);
         const ptr = try IoUring.setup_buf_ring(
             io_uring_fd,
@@ -153,25 +138,43 @@ const BufRing = struct {
         }
 
         IoUring.buf_ring_advance(ptr, config.buf_count);
-        return .{ ._io_uring_fd = io_uring_fd, ._ptr = ptr };
+        return .{
+            ._io_uring_fd = io_uring_fd,
+            ._ptr = ptr,
+            ._buffers = buffers,
+        };
     }
 
-    fn deinit(self: BufRing) void {
+    pub fn deinit(self: BufRing, allocator: mem.Allocator) void {
         IoUring.free_buf_ring(
             self._io_uring_fd,
             self._ptr,
             config.buf_count,
             bg_id,
         );
+
+        allocator.free(self._buffers);
     }
 
-    pub fn release(self: BufRing, buf_id: u16, buffers: Buffers) void {
+    pub fn release(self: BufRing, buf_id: u16) void {
         debug.assert(config.buf_count > buf_id);
 
-        add_buf(self._ptr, buf_id, buffers, 0);
+        add_buf(self._ptr, buf_id, self._buffers, 0);
         IoUring.buf_ring_advance(self._ptr, 1);
     }
+
+    // TODO: pointless function?
+    pub fn get_buf(self: BufRing, buf_id: u16) []const u8 {
+        return &self._buffers[buf_id];
+    }
 };
+
+test "no initialising buf ring and then deinitialising" {
+    var aio = try AsyncIO.init();
+    defer aio.deinit();
+    var br = try BufRing.init(testing.allocator, aio.io_uring_fd());
+    defer br.deinit(testing.allocator);
+}
 
 pub const Server = struct {
     fd: i32,

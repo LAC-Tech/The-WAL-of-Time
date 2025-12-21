@@ -81,7 +81,9 @@ pub const State = struct {
             .send => self.pushReq(.{
                 .release_buf = .{ .buf_id = user_data.msg.send.buf_id },
             }),
-            .close => {},
+            .close => self.pushReq(.{
+                .close = .{ .client_fd = user_data.msg.close.client_fd },
+            }),
         }
 
         return self.reqs.items;

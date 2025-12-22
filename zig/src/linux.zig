@@ -51,7 +51,7 @@ pub const AsyncIO = struct {
 
         return .{
             .more = (cqe.flags & IORING_CQE_F_MORE) != 0,
-            .user_data = io.fromU64(cqe.user_data),
+            .user_data = io.UserData.fromU64(cqe.user_data),
             .buf_id = @intCast(cqe.flags >> IORING_CQE_BUFFER_SHIFT),
             .result = cqe.res,
         };

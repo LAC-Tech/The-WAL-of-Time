@@ -87,6 +87,10 @@ pub const UserData = packed struct {
     pub fn close() Close {
         return .{};
     }
+
+    pub fn fromU64(n: u64) UserData {
+        return @bitCast(n);
+    }
 };
 
 pub const Res = struct {
@@ -101,7 +105,6 @@ pub const Res = struct {
 };
 
 pub const Req = union(enum) {
-    no_op,
     recv: struct { client_fd: i32 },
     send: struct { client_fd: i32, buf_id: u16, len: usize },
     close: struct { client_fd: i32 },
@@ -109,35 +112,31 @@ pub const Req = union(enum) {
     release_buf: struct { buf_id: u16 },
 };
 
-pub fn fromU64(n: u64) UserData {
-    return @bitCast(n);
-}
-
 test "UserData round-trip" {
     var rng = std.Random.DefaultPrng.init(testing.random_seed);
 
     debug.print("{}", .{testing.random_seed});
 
     for (0..1_000) |_| {
-        // Create specific struct types
-        const accept_struct = Accept{};
-        const recv_struct = Recv{ .client_fd = rng.random().int(i32) };
-        const send_struct = Send{ .buf_id = rng.random().int(u16) };
+        const accept_expected = Accept{};
+        const recv_expectedc = Recv{ .client_fd = rng.random().int(i32) };
+        const send_expected = Send{ .buf_id = rng.random().int(u16) };
 
-        // Test their toU64() methods and round-trip through fromUserData
-        const accept_u64 = accept_struct.toU64();
-        const recv_u64 = recv_struct.toU64();
-        const send_u64 = send_struct.toU64();
+        const accept_u64 = accept_expected.toU64();
+        const recv_u64 = recv_expectedc.toU64();
+        const send_u64 = send_expected.toU64();
 
-        const accept_back = fromU64(accept_u64);
-        const recv_back = fromU64(recv_u64);
-        const send_back = fromU64(send_u64);
+        const accept_actual = UserData.fromU64(accept_u64);
+        const recv_actual = UserData.fromU64(recv_u64);
+        const send_actual = UserData.fromU64(send_u64);
 
         // Verify we get the same values back
-        try testing.expect(accept_back.syscall == .accept);
-        try testing.expect(recv_back.syscall == .recv);
-        try testing.expect(send_back.syscall == .send);
-        try testing.expect(recv_back.msg.recv.client_fd == recv_struct.client_fd);
-        try testing.expect(send_back.msg.send.buf_id == send_struct.buf_id);
+        try testing.expect(accept_actual.syscall == .accept);
+        try testing.expect(recv_actual.syscall == .recv);
+        try testing.expect(send_actual.syscall == .send);
+        try testing.expect(
+            recv_actual.msg.recv.client_fd == recv_expectedc.client_fd,
+        );
+        try testing.expect(send_actual.msg.send.buf_id == send_expected.buf_id);
     }
 }

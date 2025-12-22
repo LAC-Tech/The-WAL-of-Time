@@ -1,5 +1,92 @@
 #![cfg_attr(not(test), no_std)]
 
+const _: () = assert!(core::mem::size_of::<usize>() == 8);
+
+pub mod io;
+
+pub struct StateMachine {
+    server_fd: i32,
+    req_buf: [io::Req; 2],
+}
+
+impl StateMachine {
+    pub fn new(server_fd: i32) -> Self {
+        Self { server_fd, req_buf: [io::Req::Illegal; 2] }
+    }
+
+    pub fn transition(&mut self, res: io::Res) -> &[io::Req] {
+        use io::{Req, Res, UserData};
+        let Res { result, user_data, more, buf_id } = res;
+
+        let reqs: &[Req] = match (user_data, more) {
+            // Error; resubmit
+            (UserData::Accept, _) if 0 > result => {
+                &[Req::Accept { server_fd: self.server_fd }]
+            }
+            (UserData::Accept, true) => &[Req::Recv { client_fd: result }],
+            (UserData::Accept, false) => &[
+                Req::Recv { client_fd: result },
+                Req::Accept { server_fd: self.server_fd },
+            ],
+            // EOF OR error; close file and release buffer
+            (UserData::Recv { client_fd }, _) if 0 >= result => {
+                &[Req::ReleaseBuf { buf_id }, Req::Close { client_fd }]
+            }
+            (UserData::Recv { client_fd }, true) => &[Req::Send {
+                client_fd,
+                buf_id,
+                len: result.try_into().unwrap(),
+            }],
+            (UserData::Recv { client_fd }, false) => &[
+                Req::Send {
+                    client_fd,
+                    buf_id,
+                    len: result.try_into().unwrap(),
+                },
+                Req::Recv { client_fd },
+            ],
+            (UserData::Send { buf_id }, _) => &[Req::ReleaseBuf { buf_id }],
+            (UserData::Close, _) => &[],
+        };
+
+        self.req_buf.copy_from_slice(reqs);
+        &self.req_buf[0..reqs.len()]
+    }
+}
+
+pub fn execute<AIO: io::AsyncIO, BR: io::BufRing>(
+    async_io: &mut AIO,
+    buf_ring: &mut BR,
+    reqs: &[io::Req],
+) -> Result<u32, AIO::Err> {
+    use io::{Req, UserData};
+    for &req in reqs {
+        match req {
+            Req::Illegal => panic!("illegal instruction!"),
+            Req::Recv { client_fd } => {
+                async_io.recv(UserData::Recv { client_fd })?;
+            }
+            Req::Send { client_fd, buf_id, len } => {
+                let ud = UserData::Send { buf_id };
+                let data = &buf_ring.get(buf_id)[0..len];
+                async_io.send(client_fd, data, ud)?;
+            }
+            Req::Close { client_fd } => {
+                async_io.close(client_fd, UserData::Close)?;
+            }
+            Req::Accept { server_fd } => {
+                async_io.accept(server_fd, UserData::Accept)?;
+            }
+            Req::ReleaseBuf { buf_id } => {
+                buf_ring.release(buf_id);
+            }
+        }
+    }
+
+    async_io.submit()
+}
+
+/*
 extern crate alloc;
 
 #[derive(Copy, Clone, Default, Ord, Eq, PartialEq, PartialOrd)]
@@ -180,3 +267,4 @@ mod stack_vec {
         }
     }
 }
+*/

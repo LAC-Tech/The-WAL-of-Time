@@ -107,10 +107,6 @@ pub const Req = union(enum) {
     close: struct { client_fd: i32 },
     accept: struct { server_fd: i32 },
     release_buf: struct { buf_id: u16 },
-
-    pub fn init_recv(client_fd: i32) Req {
-        return .{ .recv = .{ .client_fd = client_fd } };
-    }
 };
 
 pub fn fromU64(n: u64) UserData {

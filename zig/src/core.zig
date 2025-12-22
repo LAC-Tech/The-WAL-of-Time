@@ -23,22 +23,24 @@ pub const StateMachine = struct {
         self: *StateMachine,
         res: io.Res,
     ) []const io.Req {
+        const result = res.result;
         const user_data = res.user_data;
+        const syscall = user_data.syscall;
 
-        switch (user_data.syscall) {
+        switch (syscall) {
             .accept => {
-                if (res.result >= 0) {
-                    const client_fd = res.result;
-                    if (res.more) {
-                        return self.fill(&.{io.Req.init_recv(client_fd)});
-                    } else {
-                        return self.fill(&.{
-                            io.Req.init_recv(client_fd),
+                if (result >= 0) {
+                    return if (res.more)
+                        self.fill(&.{
+                            .{ .recv = .{ .client_fd = result } },
+                        })
+                    else
+                        self.fill(&.{
+                            .{ .recv = .{ .client_fd = result } },
                             .{ .accept = .{ .server_fd = self.server_fd } },
                         });
-                    }
                 } else {
-                    // Scenario 3: Error
+                    // Error; resubmit
                     return self.fill(&.{
                         .{ .accept = .{ .server_fd = self.server_fd } },
                     });

@@ -2,6 +2,7 @@
 
 const _: () = assert!(core::mem::size_of::<usize>() == 8);
 
+pub mod config;
 pub mod io;
 
 pub struct StateMachine {

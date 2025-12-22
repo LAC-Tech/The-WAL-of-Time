@@ -67,7 +67,7 @@ pub trait AsyncIO {
     ) -> Result<(), Self::Err>;
 
     fn wait_for_res(&mut self) -> Result<Res, Self::Err>;
-    fn submit(&mut self) -> Result<u32, Self::Err>;
+    fn submit(&mut self) -> Result<usize, Self::Err>;
 }
 
 #[cfg(test)]

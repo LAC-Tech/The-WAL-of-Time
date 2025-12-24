@@ -1,4 +1,4 @@
-use std::os::fd::AsRawFd;
+use std::{os::fd::AsRawFd, ptr::null};
 
 use io_uring::{IoUring, opcode, types};
 use lib;
@@ -30,14 +30,20 @@ impl lib::io::AsyncIO for AsyncIO {
     }
     */
 
-    fn accept(&mut self, server_fd: i32, user_data: impl Into<u64>) {
-        let read_e = opcode::Accept::new(
-            types::Fd(server_fd),
-            buf.as_mut_ptr(),
-            buf.len() as _,
-        )
-        .build()
-        .user_data(0x42);
+    fn accept(
+        &mut self,
+        server_fd: i32,
+        user_data: impl Into<u64>,
+    ) -> Result<(), Self::Err> {
+        let accept = opcode::AcceptMulti::new(types::Fd(server_fd))
+            .build()
+            .user_data(user_data.into());
+
+        unsafe {
+            self.io_uring.submission().push(&accept)?;
+        }
+
+        Ok(())
     }
 }
 

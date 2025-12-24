@@ -1,7 +1,5 @@
 #![cfg_attr(not(test), no_std)]
 
-const _: () = assert!(core::mem::size_of::<usize>() == 8);
-
 pub mod config;
 pub mod io;
 
@@ -59,7 +57,7 @@ pub fn execute<AIO: io::AsyncIO, BR: io::BufRing>(
     async_io: &mut AIO,
     buf_ring: &mut BR,
     reqs: &[io::Req],
-) -> Result<u32, AIO::Err> {
+) -> Result<usize, AIO::Err> {
     use io::{Req, UserData};
     for &req in reqs {
         match req {
